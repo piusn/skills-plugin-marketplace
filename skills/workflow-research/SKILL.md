@@ -122,13 +122,10 @@ Use multiple sources in parallel:
    - Link follow-up tasks to the research findings
    - Tag follow-ups with appropriate workflow type (engineering, docs, etc.)
 
-4. **Knowledge capture:**
-   Invoke the `session-knowledge` skill to extract reusable knowledge from this research session — new patterns, tool usage, architectural insights, and findings worth persisting as instructions or documentation.
-
-5. **Run mandatory completion review:**
+4. **Run mandatory completion review:**
    Run the 4-model completion review as defined in `start-task` Critical Rules §3 (Sonnet, Opus, Gemini, GPT-5.4 in parallel). Address critical findings before marking done.
 
-6. **Complete the task:**
+5. **Complete the task:**
    ```
    DailyPlanner-complete_task(taskId: "[task_id]", summary: "[key findings summary]")
    ```

@@ -13,17 +13,19 @@ Starting the day right means having a complete picture: what happened overnight,
 
 ## Workflow
 
-### Step 0b: Yesterday's Session Catch-Up
-Check if yesterday's Copilot sessions were fully processed for outcomes:
-
-1. **Invoke the `session-outcomes` skill** with scope = yesterday
-2. This catches any work done in sessions that wasn't captured during close-day (e.g., late-night sessions, sessions where close-day wasn't run)
-3. Only processes sessions not already tracked — idempotent by design
-
-> **Note:** This step runs automatically. If yesterday's sessions are already processed or no sessions exist, it is skipped silently.
-
 ### Step 1: Sync Calendar
 Invoke the `sync-meetings` skill to pull meetings from the official calendar into Daily Planner.
+
+### Step 1.5: Sync Copilot Sessions
+Sync yesterday's sessions that may not have been captured (covers sessions from after close-day or from other machines):
+
+```
+DailyPlanner-sync_copilot_sessions(since: "yesterday yyyy-MM-dd")
+```
+
+Brief report: "[N] sessions synced from yesterday"
+
+This is a quick, non-interactive step. Just report the count and continue.
 
 ### Step 2: Get Today's Tasks & Meetings
 Pull focus items in parallel:
@@ -71,6 +73,26 @@ Use WorkIQ to do a thorough scan of overnight/recent communications:
    workiq-ask_work_iq: "Have any documents, presentations, or files been shared with me in the last 24 hours? List with sender and brief description."
    ```
 
+5. **Pull request notification emails:**
+   ```
+   workiq-ask_work_iq: "What pull request notification emails have I received in the last 24 hours? Include PR title, repository, author, what action is needed from me (review requested, comments added, approved, merged, changes requested), and any deadlines or urgency signals."
+   ```
+
+6. **Azure spend / cost alert emails:**
+   ```
+   workiq-ask_work_iq: "Do I have any emails about Azure spend, Azure cost alerts, budget warnings, or subscription cost reports from the last 48 hours? Summarize each with: which subscription or resource group, current spend vs budget, trend direction, and which team owns it."
+   ```
+
+7. **S360 SFI (Secure Future Initiative) items:**
+   ```
+   workiq-ask_work_iq: "Do I have any emails, Teams messages, or notifications about S360 items, Secure Future Initiative (SFI), security compliance, or ServiceTree security findings from the last 48 hours? Summarize each with: item title, severity, affected service or team, due date, and current status."
+   ```
+
+8. **S360 SFI follow-up from Teams channels:**
+   ```
+   workiq-ask_work_iq: "Are there any Teams messages in my channels about S360, SFI compliance, security bugs, or service health reviews that mention action items or deadlines? Include channel name, who posted, and what's needed."
+   ```
+
 ### Step 4: Extract Action Items
 From the email/Teams catch-up, extract concrete action items:
 
@@ -100,15 +122,28 @@ For each meeting today, provide a quick context hint:
    - Time until meeting starts
 
 ### Step 6: PR & Code Review Check
-Check for pending code reviews and PR activity:
+Check for pending code reviews and PR activity from multiple sources:
 
-1. **PRs needing my review:**
+1. **PRs needing my review (from email notifications):**
+   Cross-reference PR notification emails gathered in Step 3 (item 5) to build a complete picture:
+   - PRs where review was requested from me
+   - PRs with new comments awaiting my response
+   - PRs that are approved and ready to merge (my authored PRs)
+
+2. **PRs needing my review (from GitHub):**
    ```
    workiq-ask_work_iq: "Do I have any pending pull request reviews or code review requests?"
    ```
 
-2. **My open PRs:**
+3. **My open PRs with activity:**
    Check for PRs the user has open that may have new comments or approvals.
+
+4. **Consolidate PR action items:**
+   Merge results from email notifications and direct PR queries. Deduplicate and categorize:
+   - 🔴 **Review requested** — someone is waiting on me
+   - 🟡 **Comments to address** — feedback on my PRs
+   - 🟢 **Ready to merge** — my PRs with sufficient approvals
+   - ℹ️ **FYI** — merged/closed notifications (no action needed)
 
 ### Step 7: Tech & Global News Briefing
 Scan for relevant news to start the day informed:
@@ -176,18 +211,41 @@ Format as a clean, scannable dashboard:
 |------|----------|----------|-------------|
 | Update API docs | Mar 10 | P3 | 9 days |
 
-## 🔍 Code Reviews
-| PR | Repo | Author | Status |
-|----|------|--------|--------|
-| #456 Add caching | service-api | @John | Needs my review |
-| #452 My PR: Fix timeout | service-api | Me | 2 approvals, ready to merge |
+## 🔍 Code Reviews (from emails + GitHub)
+| PR | Repo | Author | Action Needed | Source |
+|----|------|--------|---------------|--------|
+| #456 Add caching | service-api | @John | 🔴 Review requested | Email + GitHub |
+| #452 My PR: Fix timeout | service-api | Me | 🟢 Ready to merge (2 approvals) | Email |
+| #461 Update config | shared-lib | @Sarah | 🟡 Comments to address | Email |
+
+## 💰 Azure Spend Review
+| Subscription / Resource Group | Current Spend | Budget | Trend | Team | Action |
+|-------------------------------|--------------|--------|-------|------|--------|
+| RDE-Production | $12,400 | $15,000 | ↗️ +8% | Reliability DE | ⚠️ Follow up |
+| Analytics-Dev | $3,200 | $5,000 | ↘️ -3% | Data Analytics | ✅ On track |
+
+**Follow-ups needed:**
+- [ ] Message [team] about [subscription] spend trending above budget
+- [ ] Review [resource group] for unused resources
+
+## 🔒 S360 / SFI Compliance
+| Item | Severity | Service / Team | Due Date | Status | Action |
+|------|----------|---------------|----------|--------|--------|
+| [SFI finding title] | High | [Service] / [Team] | [Date] | Open | Follow up with team |
+| [Security item title] | Medium | [Service] / [Team] | [Date] | In Progress | Check status |
+
+**Follow-ups needed:**
+- [ ] Message [team] about [SFI item] due [date]
+- [ ] Verify [team] has started remediation for [item]
 
 ## 📌 Suggested Actions
 1. [Most urgent email action]
-2. [Overdue task to address]
-3. [Meeting prep to run]
-4. [PR to review]
-5. [Task to start]
+2. [Azure spend follow-up if any budget alerts]
+3. [S360/SFI item follow-up if any are due soon]
+4. [PR review to complete]
+5. [Overdue task to address]
+6. [Meeting prep to run]
+7. [Task to start]
 
 ## 📰 Today's Tech Briefing
 | # | Story | Category | Why It Matters |
@@ -220,7 +278,7 @@ DailyPlanner-add_activity_log(
 - `DailyPlanner-get_suggested_focus` — Priority ranking
 - `DailyPlanner-get_tasks` — Today's and overdue tasks
 - `DailyPlanner-get_todays_meetings` — Meetings
-- `workiq-ask_work_iq` — Emails, Teams messages, documents, meeting follow-ups, PR reviews
+- `workiq-ask_work_iq` — Emails, Teams messages, documents, meeting follow-ups, PR notifications, Azure spend alerts, S360/SFI items
 - `notion-API-post-search` — Previous meeting notes check
 - `web_search` — Tech news, AI/ML updates, cloud platform news, market trends
 - `DailyPlanner-add_activity_log` — Log briefing
@@ -230,7 +288,9 @@ Structured morning dashboard with:
 - Overnight communications categorized by urgency (🔴/🟡/🟢)
 - Meeting schedule with prep status and pending items
 - Focus tasks and overdue items
-- Code review queue
+- Code review queue (merged from email notifications + GitHub)
+- Azure spend review with team follow-ups
+- S360/SFI compliance items with team follow-ups
 - Prioritized action list
 
 ## Notes

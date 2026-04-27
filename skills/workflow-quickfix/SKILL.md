@@ -103,16 +103,6 @@ If the fix grows beyond this scope, escalate to the `engineering-task` skill.
    ```
    git checkout main && git pull origin main
    ```
-
-### Phase 5: Knowledge Capture
-Before closing this task, scan the session for reusable knowledge:
-
-1. **Invoke the `session-knowledge` skill** to extract knowledge from this session
-2. The skill will identify deployment steps, configurations, debugging patterns, and architectural decisions discovered during this fix
-3. Knowledge is persisted as Copilot instructions, skill updates, or Notion documentation
-4. This ensures future sessions benefit from what was learned here
-
-> **Note:** This step is quick for small fixes. If no reusable knowledge is found, it completes silently.
    ⛔ Do NOT continue on the merged branch without user consent.
 
 6. **Complete the task:**

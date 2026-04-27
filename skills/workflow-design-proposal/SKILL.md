@@ -228,9 +228,6 @@ Break the migration into deliverable phases:
 
 ### Phase 6: Review & Present
 
-#### 6.0 Knowledge Capture
-Before final review, invoke the `session-knowledge` skill to extract reusable knowledge from this design proposal session — current-state analysis patterns, gap identification techniques, migration strategies, and architectural patterns worth persisting.
-
 #### 6.1 Multi-Model Design Review
 Submit the proposal for review using parallel agents:
 1. **Architecture fit** — `model: "gemini-3-pro-preview"`: Scalability, patterns, consistency

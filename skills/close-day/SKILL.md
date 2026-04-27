@@ -13,18 +13,8 @@ Closing the day properly ensures nothing falls through the cracks — work is do
 
 ## Workflow
 
-### Step 0b: Extract Session Outcomes & Knowledge
-Before reviewing the day's work, capture untracked work and reusable knowledge from today's Copilot sessions:
-
-1. **Invoke the `session-outcomes` skill** with scope = today
-2. This analyzes all sessions created or modified today, extracts distinct work items, and creates/links Daily Planner tasks
-3. As part of outcome extraction, the `session-knowledge` skill runs to capture reusable knowledge — deployment steps, configurations, debugging patterns, architectural decisions — persisting them as Copilot instructions, skill updates, or Notion documentation
-4. The extracted outcomes feed into Step 1's work summary — ensuring nothing is missed
-
-> **Note:** This step runs automatically. If no sessions exist for today or all sessions have been processed already, it is skipped silently.
-
 ### Step 1: Review Day's Work
-Pull what was accomplished and what's still in progress (now enriched with session outcomes from Step 0b):
+Pull what was accomplished and what's still in progress:
 ```
 DailyPlanner-get_tasks(status: "Completed", dueDate: "today")
 DailyPlanner-get_tasks(status: "In Progress")
@@ -158,11 +148,34 @@ For each gap, ask the user if they want to:
 - Defer to tomorrow
 - Skip for today
 
-### Step 6: Run Daily Journaling
+### Step 6: Sync Copilot Sessions, Skills & Instructions
+Sync today's work sessions, any updated skills, and instructions to the Daily Planner backend so they're viewable from any machine:
+
+1. **Sync sessions:**
+   ```
+   DailyPlanner-sync_copilot_sessions(since: "today yyyy-MM-dd")
+   ```
+   Report: "[N] sessions synced ([created] new, [updated] updated)"
+
+2. **Sync skills (if any were created/updated today):**
+   ```
+   DailyPlanner-sync_copilot_skills()
+   ```
+   Report: "[N] skills synced"
+
+3. **Sync instructions:**
+   ```
+   DailyPlanner-sync_copilot_instructions()
+   ```
+   Report: "[N] instructions synced"
+
+Note: This step is quick and non-interactive. Just report the counts and move on.
+
+### Step 7: Run Daily Journaling
 Invoke the `daily-journal` skill to compile everything into a journal entry.
 Pass the work summary, meeting outcomes, and communications data to enrich the journal.
 
-### Step 7: Plan Tomorrow
+### Step 8: Plan Tomorrow
 Show what's coming tomorrow and offer full interactive planning:
 
 1. **Quick preview:**
@@ -217,7 +230,7 @@ Show what's coming tomorrow and offer full interactive planning:
    📚 Learning suggestion: You have [N] topics due for study/review. Consider scheduling a 30-45 min learning block tomorrow.
    ```
 
-### Step 8: Evening Tech Digest
+### Step 9: Evening Tech Digest
 Quick scan of what happened in tech today:
 
 1. **Afternoon tech developments:**
@@ -240,7 +253,7 @@ Quick scan of what happened in tech today:
    If any news item relates to a topic in the user's learning path, highlight it:
    > "📚 This relates to your [subject/topic] — consider revisiting during your next learning session."
 
-### Step 9: Carry-Over & Priority Setting
+### Step 10: Carry-Over & Priority Setting
 For in-progress tasks that didn't complete:
 1. Ask if they should be marked for tomorrow's focus
 2. Update `isToday` flag if confirmed
@@ -254,7 +267,7 @@ For in-progress tasks that didn't complete:
 | Review PR #789 | Not started | ✅ Yes — P2 priority |
 ```
 
-### Step 10: End-of-Day Summary
+### Step 11: End-of-Day Summary
 Present a final summary:
 ```markdown
 ## 🌙 Day Closed — [Date]
@@ -284,6 +297,9 @@ Present a final summary:
 - `DailyPlanner-get_expenses` — Financial check
 - `DailyPlanner-update_task` — Carry-over tasks
 - `notion-API-post-search` — Check meeting notes existence
+- `DailyPlanner-sync_copilot_sessions` — Sync today's sessions to backend
+- `DailyPlanner-sync_copilot_skills` — Sync local skills to backend
+- `DailyPlanner-sync_copilot_instructions` — Sync local instructions to backend
 - `workiq-ask_work_iq` — Unanswered emails, Teams messages, tomorrow's meetings
 - `web_search` — Afternoon tech developments, software engineering announcements
 - `daily-journal` skill — Compose and save journal

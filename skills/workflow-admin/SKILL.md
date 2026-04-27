@@ -84,13 +84,10 @@ Not all tasks produce code. Administrative work — drafting communications, coo
    - Note decisions made and their rationale
    - Record any commitments or timelines agreed upon
 
-3. **Knowledge capture:**
-   Invoke the `session-knowledge` skill to extract any reusable knowledge from this admin/coordination session — process patterns, communication templates, or team conventions worth persisting.
-
-4. **Run mandatory completion review:**
+3. **Run mandatory completion review:**
    Run the 4-model completion review as defined in `start-task` Critical Rules §3 (Sonnet, Opus, Gemini, GPT-5.4 in parallel). Address critical findings before marking done.
 
-5. **Complete the task:**
+4. **Complete the task:**
    ```
    DailyPlanner-complete_task(taskId: "[task_id]", summary: "[what was coordinated/delivered]")
    ```

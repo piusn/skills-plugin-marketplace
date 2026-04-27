@@ -24,6 +24,48 @@ During sessions, you discover valuable operational knowledge:
 
 This knowledge currently lives only in session history and the user's memory. It's lost to future sessions. This skill extracts it and routes it to the right place in the Copilot ecosystem.
 
+## Destination Hierarchy — Where Knowledge Lives Best
+
+Not all knowledge belongs in the same place. Route each nugget to the **closest** place to where it's needed:
+
+```
+1. Code-level documentation (README.md, XML docs)     ← Best for "how this component works"
+   Lives WITH the code it describes. Developers see it when browsing the module.
+   Examples: Execution/README.md telemetry flow, Scenarios/README.md local.settings pattern
+
+2. Repo instructions (.github/instructions/*.md)       ← Best for "conventions when editing these files"
+   Auto-loaded by Copilot when editing matching files (via applyTo globs).
+   Examples: backtest-scenarios.instructions.md, trading-pipeline.instructions.md
+
+3. Global instructions (~/.copilot/instructions/*.md)   ← Best for "patterns across all repos"
+   Applied everywhere regardless of repo.
+   Examples: csharp.instructions.md, typescript.instructions.md
+
+4. Copilot skills (~/.copilot/skills/*)                 ← Best for "repeatable multi-step procedures"
+   Invoked explicitly by name. Good for workflows that span multiple tools.
+   Examples: deploy-local, feature-design, session-knowledge
+
+5. store_memory                                         ← Best for "gotchas, bugs, and facts to remember"
+   Short facts that prevent repeating mistakes. Retrieved by memory recall.
+   Examples: "CandleLoader must query open_ts not _id.ts", "use isolated build paths when process locks DLLs"
+
+6. Notion pages                                         ← Best for "team knowledge and operational docs"
+   Long-form documentation for team consumption.
+   Examples: Team onboarding guides, runbooks, meeting notes
+```
+
+### Choosing the Right Destination
+
+| Ask Yourself | If YES → |
+|-------------|----------|
+| Would a developer reading this module's code need to know this? | **Code README.md** |
+| Is this a convention that Copilot should enforce when editing specific files? | **Repo instruction** |
+| Is this a short fact that prevents a known mistake? | **store_memory** |
+| Is this a multi-step procedure I'll want to automate? | **Skill** |
+| Is this team operational knowledge (not code-related)? | **Notion** |
+
+**Rule: Prefer documentation CLOSER to the code.** A README.md in the module directory is better than a repo instruction, which is better than a global instruction, which is better than store_memory.
+
 ## Knowledge Categories
 
 | Category | What It Captures | Where It Goes |
@@ -35,6 +77,8 @@ This knowledge currently lives only in session history and the user's memory. It
 | **Workflow** | New task patterns, multi-step procedures, team processes | New or updated Copilot skill |
 | **Tool Usage** | CLI commands, API patterns, SDK usage, configuration | `.instructions.md` or learning notes |
 | **Team Convention** | Naming, branching, review process, repo structure | Repo `.github/instructions/` or team Notion page |
+| **Mistakes & Lessons** | Bugs discovered, wrong assumptions, gotchas to avoid | `store_memory` + code README if pattern-level |
+| **Code Documentation** | How a module/component works, data flows, schemas | Code-level README.md or XML doc comments |
 
 ## Trigger Modes
 
@@ -129,19 +173,34 @@ Scan the session data for **knowledge signals** — information that would be va
 - Configuration file formats and required fields
 - Signal words: "command", "CLI", "SDK", "API call", "endpoint"
 
+**Mistakes & lessons learned** (highest priority — prevent re-occurrence):
+- Bugs that were hard to find (wrong field names, wrong query, wrong default)
+- Incorrect assumptions that wasted time (e.g., "this field is indexed" when it wasn't)
+- Approaches that failed before finding the right one
+- Subtle gotchas (e.g., System.CommandLine defaults override file-based config)
+- Data mismatches (e.g., querying embedded `_id.ts` vs top-level `open_ts`)
+- Signal words: "bug", "wrong", "mistake", "gotcha", "actually", "turns out", "the real issue was", "wasted time", "should have", "didn't realize"
+
+**Code documentation** (knowledge that belongs with the code):
+- How a module or component works (data flow, architecture)
+- Why a design decision was made (not just what)
+- Setup steps for a subsystem (e.g., "copy template, fill credentials")
+- Schema explanations (what fields mean, how they relate)
+- Signal words: "how it works", "the flow is", "this component", "the pattern is"
+
 #### For Each Knowledge Nugget, Extract:
 
 ```
 {
   "title": "Descriptive title",
-  "category": "deployment | environment | debugging | architecture | workflow | tool-usage | team-convention",
+  "category": "deployment | environment | debugging | architecture | workflow | tool-usage | team-convention | mistake | code-docs",
   "description": "What was learned (2-3 sentences)",
   "content": "The actual knowledge — commands, steps, configs, patterns",
   "repository": "Which repo this applies to (or null for global)",
   "team": "Which team this is relevant to (or null for personal)",
   "scope": "global | repo-specific | team-specific",
   "confidence": "high | medium",
-  "destination": "instruction | skill-update | new-skill | notion | architecture-decision"
+  "destination": "code-readme | instruction | skill-update | new-skill | store-memory | notion | architecture-decision"
 }
 ```
 
@@ -152,19 +211,33 @@ Route knowledge to the right place based on category and scope:
 #### Decision Tree:
 
 ```
+Was a mistake made or a gotcha discovered that should never be repeated?
+  YES → store_memory (short fact) + code README if it's a module-level pattern
+  NO  ↓
+
+Does this knowledge explain how a specific module/component works?
+  YES → Code-level README.md in the module directory (closest to the code)
+        Also consider XML doc comments on key classes/methods
+  NO  ↓
+
 Is this a repeatable multi-step procedure that could automate future work?
   YES → Is it complex enough for a full skill (5+ steps, multiple tools)?
     YES → Create new Copilot skill (Step 5a)
     NO  → Could it extend an existing skill?
       YES → Update existing skill (Step 5b)
       NO  → Create instruction file (Step 5c)
-  NO → Is this repo-specific knowledge (applies only when working in that repo)?
-    YES → Create/update repo .github/instructions/ file (Step 5d)
-    NO  → Is this team-specific operational knowledge?
-      YES → Add to team Notion page (Step 5e)
-      NO  → Is this a significant architectural decision?
-        YES → Suggest architecture-decision skill (Step 5f)
-        NO  → Create/update global instruction file (Step 5c)
+  NO  ↓
+
+Is this repo-specific knowledge (applies only when working in that repo)?
+  YES → Create/update repo .github/instructions/ file (Step 5d)
+        AND update the relevant code README.md if one exists
+  NO  ↓
+
+Is this team-specific operational knowledge?
+  YES → Add to team Notion page (Step 5e)
+  NO  → Is this a significant architectural decision?
+    YES → Suggest architecture-decision skill (Step 5f)
+    NO  → Create/update global instruction file (Step 5c)
 ```
 
 ### Step 4: Present Findings to User
@@ -354,6 +427,60 @@ This creates a formal record with context, options considered, and rationale.
 ```
 
 If yes, invoke the `architecture-decision` skill with the extracted context.
+
+#### Step 5g: Code-Level Documentation (README.md / XML Docs)
+
+For knowledge that explains how a module or component works — this belongs **with the code**, not in an instruction file.
+
+1. **Find the module's README.md:**
+   - Check `{module_directory}/README.md`
+   - If it doesn't exist, create it
+
+2. **Add the knowledge** in context:
+   - Data flow diagrams (text/mermaid)
+   - Setup steps
+   - Component descriptions
+   - Schema explanations
+   - Architecture decisions specific to that module
+
+3. **For class/method-level knowledge**, add XML doc comments instead:
+   ```csharp
+   /// <summary>
+   /// Stamps entry telemetry from CandleAnalysis at position open.
+   /// Called by BacktestPersistenceService.PersistOpenPositionAsync.
+   /// </summary>
+   ```
+
+4. **Inform the user:**
+   ```
+   ✅ Updated: {module}/README.md
+   Added: {section title} — {brief description}
+   ```
+
+**When to use code docs vs instructions:**
+- Code README = "how this module works" (for developers reading the code)
+- Instruction file = "what to do when editing these files" (for Copilot and developers)
+- Both can coexist — the README explains the system, the instruction enforces conventions
+
+#### Step 5h: Store Memory (Gotchas, Bugs, Short Facts)
+
+For short facts that prevent repeating mistakes:
+
+1. **Use `store_memory` tool** with:
+   - `fact`: Clear, actionable statement (< 200 chars)
+   - `citations`: File paths or user input that sourced this fact
+   - `reason`: Why this matters and what future task it helps with
+
+2. **Good memory candidates:**
+   - Bug root causes: "CandleLoader must query `open_ts` not `_id.ts` — the API uses top-level fields"
+   - Gotchas: "System.CommandLine options with defaults always materialize — use nullable for overrides"
+   - Workarounds: "Use isolated build paths (`-p:OutDir=...`) when process locks DLLs"
+   - Facts: "SpreadClose in DB is in price units (Ask-Bid), not points"
+
+3. **Bad memory candidates** (don't store):
+   - Obvious things anyone would discover in 30 seconds
+   - Temporary state ("the backtest is running on PID 12832")
+   - User preferences that aren't code conventions
 
 ### Step 6: Summary Report
 

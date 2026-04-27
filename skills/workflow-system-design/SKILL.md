@@ -264,10 +264,7 @@ Document key decisions and their trade-offs:
 1. **Compile the design document:**
    Save to `system-documentation/system-design.md` combining all phases above
 
-2. **Knowledge capture:**
-   Invoke the `session-knowledge` skill to extract reusable knowledge — architectural patterns, capacity planning heuristics, infrastructure decisions, and integration patterns discovered during this design.
-
-3. **Multi-model review** (same as engineering-task workflow):
+2. **Multi-model review** (same as engineering-task workflow):
    - **Architecture review** — `model: "gemini-3-pro-preview"`: Scalability and architecture fit
    - **Edge case review** — `model: "gpt-5.4"`: Failure modes and security
    - **Completeness review** — `model: "claude-sonnet-4.6"`: Missing requirements

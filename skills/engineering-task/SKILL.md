@@ -334,28 +334,6 @@ Since the MCP is in active development, capture improvement feedback:
   DailyPlanner-add_activity_log(taskId: "[task_id]", log: "ui-testing-agent feedback: [issue/suggestion]")
   ```
 
-### Phase 7: Knowledge Capture
-
-Before closing this task, extract reusable knowledge from the session:
-
-1. **Invoke the `session-knowledge` skill** to scan the session for:
-   - Deployment procedures discovered or used
-   - Environment configurations and setup steps
-   - Debugging patterns and troubleshooting steps
-   - Architectural decisions and patterns established
-   - New tool usage, SDK patterns, or API conventions
-
-2. The skill will persist findings as:
-   - **Copilot instruction files** (global or repo-specific)
-   - **Skill updates** (if an existing skill should be enhanced)
-   - **New skills** (if a repeatable multi-step workflow was established)
-   - **Notion team page documentation** (for team-specific operational knowledge)
-
-3. This ensures future engineering tasks in the same repo or domain automatically benefit from the knowledge gained in this session.
-
-> **Note:** Knowledge capture is particularly valuable after engineering tasks that involve deployment, infrastructure, or new integrations.
-  ```
-
 ### Phase 6: Ship
 
 1. **Run the `engineering-checklist` quality gate:**

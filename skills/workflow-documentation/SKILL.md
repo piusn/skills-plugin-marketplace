@@ -96,13 +96,10 @@ Good documentation is as important as good code. This workflow structures the do
    - Link from relevant code files (README references)
    - Update any doc indexes or navigation
 
-3. **Knowledge capture:**
-   Invoke the `session-knowledge` skill to extract any reusable knowledge discovered while writing documentation — patterns, conventions, or procedures worth persisting as Copilot instructions.
-
-4. **Run mandatory completion review:**
+3. **Run mandatory completion review:**
    Run the 4-model completion review as defined in `start-task` Critical Rules §3 (Sonnet, Opus, Gemini, GPT-5.4 in parallel). Address critical findings before marking done.
 
-5. **Complete the task:**
+4. **Complete the task:**
    ```
    DailyPlanner-complete_task(taskId: "[task_id]", summary: "[docs created/updated]")
    ```

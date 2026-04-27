@@ -349,12 +349,6 @@ Produce a comprehensive audit across all engineering-centric aspects. Save to `s
 1. [Important gap]
 2. [Important gap]
 
----
-
-## Final Step: Knowledge Capture
-
-Before closing this documentation task, invoke the `session-knowledge` skill to extract reusable knowledge discovered during system documentation — codebase patterns, deployment procedures, infrastructure details, and operational knowledge that should be persisted as Copilot instructions or team documentation.
-
 ### 🟢 Improvement (backlog)
 1. [Nice-to-have improvement]
 2. [Nice-to-have improvement]

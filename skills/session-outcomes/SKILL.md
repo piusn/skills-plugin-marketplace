@@ -2,7 +2,7 @@
 name: session-outcomes
 description: >
   Extract distinct work outcomes from Copilot sessions, classify as personal or
-  official, and track in Daily Planner + Notion. Use this skill when the user says
+  official, and track in Daily Planner. Use this skill when the user says
   "review my sessions", "extract session outcomes", "what did I do today",
   "session work", "untracked work", or "process sessions". Also invoked by
   close-day (today's sessions) and start-day (yesterday's catch-up).
@@ -10,7 +10,7 @@ description: >
 
 # Session Outcomes — Extract & Track Work from Copilot Sessions
 
-Analyzes Copilot sessions to find distinct pieces of work, classifies them as personal or official, creates/links Daily Planner tasks, and routes outcomes to the appropriate Notion pages.
+Analyzes Copilot sessions to find distinct pieces of work, classifies them as personal or official, and creates/links Daily Planner tasks.
 
 ## Why This Skill Exists
 
@@ -76,6 +76,44 @@ ORDER BY s.created_at
 ```
 
 **Skip sessions with < 3 turns** — these are trivial and unlikely to contain meaningful work.
+
+### Step 0.1: Verify Daily Planner Tools Are Available
+
+**CRITICAL: Do NOT proceed without Daily Planner tools.** All outcomes must be tracked there.
+
+1. **Check if `DailyPlanner-*` tools are available** in the current session by attempting:
+   ```
+   DailyPlanner-search_tasks(query: "test")
+   ```
+
+2. **If tools are NOT available**, work with the user to fix it:
+   ```
+   ask_user:
+     question: "Daily Planner MCP tools are not available in this session. We need them to track outcomes. How should we proceed?"
+     choices:
+       - "Restart the session (I'll re-invoke after restart)"
+       - "Kill and restart the Daily Planner MCP server"
+       - "Skip outcome tracking for now"
+   ```
+
+   **To restart the Daily Planner MCP:**
+   - Find and kill existing instances: `Get-Process -Name "node" | Where-Object { $_.CommandLine -like "*daily-planner*" } | Stop-Process`
+   - Or check MCP server config in VS Code settings / Copilot config
+   - The user may need to restart their IDE or Copilot CLI session
+
+3. **If tools ARE available**, proceed to Step 0.5.
+
+**Do NOT fall back to Notion or any other system.** Daily Planner is the single source of truth for task tracking.
+
+### Step 0.5: Sync Sessions to Backend
+
+Before analyzing sessions, sync them to the Daily Planner backend so they're accessible from the web UI:
+
+```
+DailyPlanner-sync_copilot_sessions(since: "{scope_start_date}")
+```
+
+This ensures the sessions being analyzed are also viewable in the Daily Planner web app at kamin.day. Report the sync count briefly and continue.
 
 ### Step 1: Gather Session Data
 
@@ -317,74 +355,11 @@ Alongside outcome tracking, scan each work item for **reusable knowledge**:
 
 1. **Invoke the `session-knowledge` skill** with the session data already gathered
 2. The skill identifies deployment procedures, environment configs, debugging patterns, architectural decisions, and new workflows
-3. Knowledge is persisted as Copilot instructions, skill updates, or Notion documentation
-4. This runs in parallel with the Notion outcome creation (Step 6)
+3. Knowledge is persisted as Copilot instructions, skill updates, code documentation, or store_memory facts
 
 > **Note:** When session-outcomes is called from close-day or start-day, knowledge extraction runs automatically. For ad-hoc invocations, the user can choose to skip this step.
 
-### Step 6: Create Notion Outcomes
-
-#### For Official Outcomes → Team Notion Page
-
-1. **Identify the team's Notion page ID** from the team mapping:
-   | Team | Notion Page ID |
-   |------|---------------|
-   | Reliability Data Engineering | `1e9891a6-db0d-809b-8632-f864d2db3ae7` |
-   | Benchmarking | `1e9891a6-db0d-80c3-941f-e77ff2d0127a` |
-   | Data Analytics & Anomaly Detection | `1e9891a6-db0d-80f2-bf34-c3c003ec6bd5` |
-   | Sustainability | `1e9891a6-db0d-80bd-8f62-eaa264109fb2` |
-   | Power, Performance & Sustainability DE | `1e9891a6-db0d-80bb-8b1f-e8e9f72212da` |
-   | Gates & Defense | `b359111c-26e7-4417-b741-fddcf2abb50d` |
-
-2. **Create a child page** under the team page:
-   ```
-   notion-mcp-create_page(
-     parentId: "{team_notion_page_id}",
-     parentType: "page",
-     title: "📋 {work_item_title} — {date}"
-   )
-   ```
-
-3. **Add content blocks** to the page:
-   ```
-   notion-mcp-append_block_children(
-     blockId: "{new_page_id}",
-     childrenJson: [
-       // Heading: Overview
-       { "object": "block", "type": "heading_2", "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "Overview" }}]}},
-       // Description paragraph
-       { "object": "block", "type": "paragraph", "paragraph": { "rich_text": [{ "type": "text", "text": { "content": "{description}" }}]}},
-
-       // Heading: Deliverables
-       { "object": "block", "type": "heading_2", "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "Deliverables" }}]}},
-       // Bulleted list of files, commits, PRs
-       { "object": "block", "type": "bulleted_list_item", "bulleted_list_item": { "rich_text": [{ "type": "text", "text": { "content": "{file/ref}" }}]}},
-
-       // Heading: Outcome
-       { "object": "block", "type": "heading_2", "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "Outcome" }}]}},
-       { "object": "block", "type": "paragraph", "paragraph": { "rich_text": [{ "type": "text", "text": { "content": "{outcome}" }}]}},
-
-       // Heading: Related Communications
-       { "object": "block", "type": "heading_2", "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "Related Communications" }}]}},
-       { "object": "block", "type": "paragraph", "paragraph": { "rich_text": [{ "type": "text", "text": { "content": "{enrichment_data}" }}]}},
-
-       // Heading: Tracking
-       { "object": "block", "type": "heading_2", "heading_2": { "rich_text": [{ "type": "text", "text": { "content": "Tracking" }}]}},
-       { "object": "block", "type": "paragraph", "paragraph": { "rich_text": [{ "type": "text", "text": { "content": "Daily Planner Task: {task_id}\nSession: {session_id}\nDate: {date}\nDuration: {duration_estimate}" }}]}}
-     ]
-   )
-   ```
-
-#### For Personal Outcomes → Personal Outcomes Area
-
-1. **Use the personal outcomes parent page** (create on first use if it doesn't exist):
-   - **Personal Outcomes Page ID:** `34b891a6-db0d-8116-9045-e667812913fa`
-   - This page lives under "My Role as Architect" in Notion
-   - URL: https://www.notion.so/Personal-Session-Outcomes-34b891a6db0d81169045e667812913fa
-
-2. **Create a child page** with the same structure as official outcomes (but without team routing)
-
-### Step 7: Present Summary to User
+### Step 6: Present Summary to User
 
 Display a consolidated outcomes report:
 
@@ -396,15 +371,15 @@ Display a consolidated outcomes report:
 ---
 
 ### 🏢 Official Outcomes
-| # | Outcome | Team | Task | Status | Notion |
-|---|---------|------|------|--------|--------|
-| 1 | {title} | {team} | #{id} (existing) | Updated | ✅ [Link] |
-| 2 | {title} | {team} | #{id} (new) | Created | ✅ [Link] |
+| # | Outcome | Team | Task | Status |
+|---|---------|------|------|--------|
+| 1 | {title} | {team} | #{id} (existing) | Updated |
+| 2 | {title} | {team} | #{id} (new) | Created |
 
 ### 🏠 Personal Outcomes
-| # | Outcome | Category | Task | Status | Notion |
-|---|---------|----------|------|--------|--------|
-| 1 | {title} | {category} | #{id} (new) | Created | ✅ [Link] |
+| # | Outcome | Category | Task | Status |
+|---|---------|----------|------|--------|
+| 1 | {title} | {category} | #{id} (new) | Created |
 
 ### ⏭️ Skipped Sessions
 | Session | Reason |
@@ -418,11 +393,10 @@ Display a consolidated outcomes report:
 - **Total distinct outcomes:** {N}
 - **Official:** {M} | **Personal:** {P}
 - **Tasks created:** {new_count} | **Tasks updated:** {existing_count}
-- **Notion pages created:** {notion_count}
 - **Estimated total work time:** {total_duration}
 ```
 
-### Step 8: Interactive Refinement
+### Step 7: Interactive Refinement
 
 After presenting the summary, ask:
 
@@ -438,11 +412,11 @@ ask_user:
 ```
 
 If the user wants changes:
-- **Reclassify:** Update the task tags in Daily Planner (add/remove "official"/"personal"), move the Notion page to the correct location
+- **Reclassify:** Update the task tags in Daily Planner (add/remove "official"/"personal")
 - **Link to goals:** Update the Daily Planner task with a goal link
 - **Merge:** Combine two work items into one task, update description
 - **Split:** Create additional tasks from a single work item
-- **Remove:** Delete the created task and Notion page
+- **Remove:** Delete the created task
 
 After applying changes, show the updated summary.
 
@@ -501,7 +475,7 @@ When creating official outcomes:
 | Work item spans multiple sessions | Note in description "Continued from session {id}" |
 | No checkpoints available | Fall back to turn-by-turn analysis |
 | WorkIQ/Teams unavailable | Skip enrichment, proceed with session data only |
-| Notion API fails | Create Daily Planner task anyway, note Notion failure, retry later |
+| Daily Planner tools unavailable | **STOP — work with user to fix (Step 0.1). Do NOT fall back to Notion.** |
 | User rejects all outcomes | Acknowledge and mark sessions as reviewed |
 | Session is current (still active) | Skip — only process completed/idle sessions |
 
@@ -524,12 +498,7 @@ When creating official outcomes:
 - `DailyPlanner-add_activity_log` — Log outcomes to existing tasks
 - `DailyPlanner-complete_task` — Mark completed work
 - `DailyPlanner-update_task` — Update tags, descriptions
-
-### Notion
-- `notion-mcp-search` — Find existing pages
-- `notion-mcp-create_page` — Create outcome pages
-- `notion-mcp-append_block_children` — Add content to pages
-- `notion-mcp-get_block_children` — Read existing team page structure
+- `DailyPlanner-sync_copilot_sessions` — Sync sessions to backend
 
 ### External Enrichment
 - `workiq-ask_work_iq` — Related emails, Teams messages, meetings

@@ -34,6 +34,14 @@ $copilotDir = Join-Path $env:USERPROFILE ".copilot"
 $repoDir = "<repository-working-directory>"  # The current working directory of the repo
 ```
 
+**Standard clone location:** `C:\repositories\skills-plugin-marketplace`
+**Clone URL:** `https://github.com/piusn/skills-plugin-marketplace.git`
+
+If the repo is not found at the current working directory, check the standard location above. If it doesn't exist anywhere, clone it first:
+```powershell
+git clone https://github.com/piusn/skills-plugin-marketplace.git "C:\repositories\skills-plugin-marketplace"
+```
+
 Verify the repo exists and has a remote:
 ```powershell
 git -C $repoDir remote -v
