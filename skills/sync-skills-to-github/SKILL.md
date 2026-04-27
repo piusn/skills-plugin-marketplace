@@ -1,11 +1,16 @@
 ---
-description: "Sync local Copilot CLI skills, instructions, and agents to the skills-plugin-marketplace GitHub repository. Use this skill when the user says 'sync skills to github', 'push skills', 'upload skills', 'backup skills', 'sync to repo', or 'publish skills'. Copies from the local .copilot directory, commits changes, and pushes to the remote repository."
+description: "Sync local Copilot CLI skills, instructions, and agents to the skills-plugin-marketplace GitHub repository. Use this skill when the user says 'sync skills to github', 'push skills', 'upload skills', 'backup skills', 'sync to repo', or 'publish skills'. Makes GitHub an exact mirror of ~/.copilot/. Local .copilot/ is the source of truth."
 ---
 
 # Sync Skills to GitHub
 
-## Context
-Skills, instructions, and agents are authored locally in the user's `~/.copilot/` directory. This skill copies them into the `skills-plugin-marketplace` repository, commits the changes, and pushes to GitHub — keeping the remote repository up to date as a portable backup and sharing mechanism.
+## Purpose
+**Direction: Local `.copilot/` → GitHub**
+**Source of truth: `.copilot/`**
+
+Make the `skills-plugin-marketplace` GitHub repository an exact mirror of the local `~/.copilot/` directory. After this skill runs, GitHub matches what's in `.copilot/` — items are added, updated, AND removed.
+
+> **Counterpart skill:** `sync-skills-from-github` does the reverse — GitHub is the source of truth, and `.copilot/` is made to match it.
 
 ## When to Use
 - After creating or updating a skill, instruction, or agent locally
@@ -13,84 +18,94 @@ Skills, instructions, and agents are authored locally in the user's `~/.copilot/
 - Before switching machines, to ensure the latest versions are published
 
 ## Important: Path Resolution
-**NEVER hardcode a username in paths.** Always resolve the user's home directory dynamically:
-
-- **PowerShell:** Use `$env:USERPROFILE` (Windows) or `$HOME` (cross-platform)
-- The `.copilot` directory is always at `<home>/.copilot/`
+**NEVER hardcode a username in paths.** Always resolve dynamically:
 
 ```powershell
 $copilotDir = Join-Path $env:USERPROFILE ".copilot"
-# Results in e.g. C:\Users\pingugi\.copilot on Windows
+```
+
+## Repository Location
+**Known location:** `C:\personal\skills-plugin-marketplace`
+**Clone URL:** `https://github.com/piusn/skills-plugin-marketplace.git`
+
+If not found, search common locations then ask the user:
+```powershell
+$candidates = @(
+    "C:\personal\skills-plugin-marketplace",
+    (Join-Path $env:USERPROFILE "skills-plugin-marketplace"),
+    (Join-Path $env:USERPROFILE "repos\skills-plugin-marketplace"),
+    (Join-Path $env:USERPROFILE "source\repos\skills-plugin-marketplace")
+)
+$repoDir = $candidates | Where-Object { Test-Path (Join-Path $_ ".git") } | Select-Object -First 1
 ```
 
 ## Workflow
 
-### Step 1: Resolve Paths
-Determine the local source and repository target paths:
+### Step 1: Pull Latest First
+Always pull before pushing to avoid conflicts:
 
 ```powershell
-$copilotDir = Join-Path $env:USERPROFILE ".copilot"
-$repoDir = "<repository-working-directory>"  # The current working directory of the repo
+git -C $repoDir pull
 ```
 
-Verify the repository exists and has a git remote:
-```powershell
-git -C $repoDir remote -v
-```
+If pull fails, warn the user and suggest `git stash` or `git reset --hard origin/main`.
 
-### Step 2: Copy Skills
-Copy all skill directories (excluding zip files and temporary artifacts):
+### Step 2: Mirror Skills (.copilot/ is Source of Truth)
+Clean the repo's skills directory and copy everything from local. This handles additions, updates, renames, and deletions in one step.
+
+⚠️ **CRITICAL: Use content-level copy to avoid directory nesting.**
 
 ```powershell
 $skillsSource = Join-Path $copilotDir "skills"
 $skillsTarget = Join-Path $repoDir "skills"
 
-# Remove existing skills in repo to handle deletions/renames
-Remove-Item "$skillsTarget\*" -Recurse -Force -ErrorAction SilentlyContinue
+# Remove all skill directories in repo (clean slate)
+Get-ChildItem $skillsTarget -Directory | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
-# Copy only directories (each skill is a folder with SKILL.md)
+# Copy each skill's CONTENTS into a fresh directory in the repo
 Get-ChildItem $skillsSource -Directory | ForEach-Object {
-    Copy-Item $_.FullName "$skillsTarget\$($_.Name)" -Recurse -Force
+    $targetDir = Join-Path $skillsTarget $_.Name
+    New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+    Copy-Item "$($_.FullName)\*" $targetDir -Recurse -Force
 }
+
+# Remove zip files and temporary artifacts
+Get-ChildItem $skillsTarget -Filter "*.zip" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
 ```
 
-### Step 3: Copy Instructions
-Copy all instruction files:
+> **Why `Copy-Item "$($_.FullName)\*"` instead of `Copy-Item $_.FullName`?**
+> `Copy-Item <folder> <existing-folder> -Recurse` creates a nested subfolder: `skills/close-day/close-day/SKILL.md`.
+> `Copy-Item <folder>\* <existing-folder> -Recurse` copies the CONTENTS into the target — correct behavior.
 
+### Step 3: Mirror Instructions
 ```powershell
 $instrSource = Join-Path $copilotDir "instructions"
 $instrTarget = Join-Path $repoDir "instructions"
 
-# Clean and copy
-Remove-Item "$instrTarget\*" -Force -ErrorAction SilentlyContinue
+Get-ChildItem $instrTarget -Filter "*.md" | Remove-Item -Force -ErrorAction SilentlyContinue
 Copy-Item "$instrSource\*.md" $instrTarget -Force
 ```
 
-### Step 4: Copy Agents
-Copy all agent definition files:
-
+### Step 4: Mirror Agents
 ```powershell
 $agentsSource = Join-Path $copilotDir "agents"
 $agentsTarget = Join-Path $repoDir "agents"
 
-# Clean and copy
-Remove-Item "$agentsTarget\*" -Force -ErrorAction SilentlyContinue
-Copy-Item "$agentsSource\*.md" $agentsTarget -Force
+if (Test-Path $agentsSource) {
+    Get-ChildItem $agentsTarget -Filter "*.md" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    Copy-Item "$agentsSource\*.md" $agentsTarget -Force
+}
 ```
 
 ### Step 5: Check for Changes
-Before committing, check if anything actually changed:
-
 ```powershell
 git -C $repoDir add -A
 $status = git -C $repoDir status --porcelain
 ```
 
-If `$status` is empty, report "Everything is already up to date" and stop.
+If `$status` is empty, report "Everything is already up to date" and stop. Do not create empty commits.
 
 ### Step 6: Summarize Changes
-Show the user what changed before committing:
-
 ```powershell
 git -C $repoDir --no-pager diff --cached --stat
 ```
@@ -104,12 +119,10 @@ Present a summary table:
 | Agents | N | N | N |
 
 ### Step 7: Commit and Push
-Commit with a descriptive message summarizing what changed:
-
 ```powershell
 git -C $repoDir commit -m "chore: sync skills, instructions, and agents
 
-[Summary of changes — e.g., added 2 skills, updated 3 instructions]
+[Summary of changes — e.g., added 2 skills, updated 3 instructions, removed 1 agent]
 
 Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 
@@ -117,16 +130,14 @@ git -C $repoDir push
 ```
 
 ### Step 8: Report Results
-Present a completion summary:
-
 ```markdown
 ## ✅ Skills Synced to GitHub
 
 | Metric | Count |
 |--------|-------|
-| Skills | 47 |
-| Instructions | 17 |
-| Agents | 1 |
+| Skills | N |
+| Instructions | N |
+| Agents | N |
 | Files changed | N |
 | Commit | abc1234 |
 
@@ -134,20 +145,29 @@ Present a completion summary:
 ```
 
 ## Error Handling
-- **No git remote:** Warn the user and suggest running `git remote add origin <url>`
-- **Push rejected:** Suggest `git pull --rebase` first, then retry push
-- **Source directory missing:** Skip that category with a warning (e.g., "No agents directory found — skipping")
-- **No changes detected:** Report "Already up to date" — do not create empty commits
+- **Repository not found:** Search known locations, then ask the user for the path.
+- **No git remote:** Warn and suggest `git remote add origin <url>`.
+- **Push rejected:** Suggest `git pull --rebase` first, then retry push.
+- **Source directory missing:** Skip that category with a warning.
+- **No changes detected:** Report "Already up to date" — do not create empty commits.
+
+## Key Design Decisions
+
+### Full mirror (.copilot/ is source of truth)
+GitHub is made to exactly match `.copilot/`. Items deleted locally are deleted from the repo. The repo directories are cleaned before copy to handle renames and deletions cleanly.
+
+### Pull before push
+Always `git pull` before copying files. This prevents force-push situations and ensures you're building on the latest remote state. If there are conflicts, the user resolves them before the sync proceeds.
+
+### Content-level copy (not folder copy)
+Always use `Copy-Item "$source\*" $target` instead of `Copy-Item $source $target` when the target folder already exists. This prevents the PowerShell nesting bug where `Copy-Item <folder> <existing-folder> -Recurse` creates `target/foldername/foldername/`.
 
 ## Tools & APIs Used
 - `powershell` — File operations and git commands
 - `git` — Version control operations
 
-## Output Format
-Summary table showing files synced, changes committed, and a link to the GitHub repository.
-
 ## Notes
 - Zip files and temporary artifacts in the skills directory are NOT copied
-- The repo's skill/instruction/agent directories are cleaned before copy to handle renames and deletions
-- Always use `$env:USERPROFILE` or `$HOME` — never hardcode a username in paths
+- Always use `$env:USERPROFILE` or `$HOME` — never hardcode a username
 - The commit message should summarize what actually changed, not be generic
+- This skill modifies the repo AND pushes — it is a write operation
