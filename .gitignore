@@ -1,0 +1,22 @@
+# Ignore everything by default
+*
+
+# Track these directories and their contents
+!skills/
+!skills/*/
+!skills/**
+!instructions/
+!instructions/**
+!agents/
+!agents/**
+
+# Track repo files
+!.gitignore
+!README.md
+
+# Still ignore binary/archive files even inside tracked dirs
+*.zip
+*.tar.gz
+*.db
+*.db-shm
+*.db-wal
