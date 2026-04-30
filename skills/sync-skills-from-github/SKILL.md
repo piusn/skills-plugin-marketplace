@@ -1,16 +1,11 @@
 ---
-description: "Sync skills, instructions, and agents from the skills-plugin-marketplace GitHub repository to the local .copilot directory. Use this skill when the user says 'sync skills from github', 'pull skills', 'download skills', 'restore skills', 'sync from repo', 'install skills', or 'set up skills on new machine'. Pulls the latest from GitHub and makes ~/.copilot/ an exact mirror. GitHub is the source of truth."
+description: "Sync skills, instructions, and agents from the skills-plugin-marketplace GitHub repository to the local machine. Use this skill when the user says 'sync skills from github', 'pull skills', 'download skills', 'restore skills', 'sync from repo', 'install skills', or 'set up skills on new machine'. Pulls the latest from GitHub and copies into the local .copilot directory."
 ---
 
 # Sync Skills from GitHub
 
-## Purpose
-**Direction: GitHub → Local `.copilot/`**
-**Source of truth: GitHub**
-
-Make the local `~/.copilot/` directory an exact mirror of the `skills-plugin-marketplace` GitHub repository. After this skill runs, local skills, instructions, and agents match what's in GitHub — items are added, updated, AND removed to stay in sync.
-
-> **Counterpart skill:** `sync-skills-to-github` does the reverse — `.copilot/` is the source of truth, and GitHub is made to match it.
+## Context
+When setting up a new machine or pulling updates made on another machine, this skill downloads the latest skills, instructions, and agents from the `skills-plugin-marketplace` GitHub repository and installs them into the local `~/.copilot/` directory.
 
 ## When to Use
 - Setting up Copilot CLI on a new machine
@@ -18,201 +13,149 @@ Make the local `~/.copilot/` directory an exact mirror of the `skills-plugin-mar
 - Restoring skills after a reinstall or profile reset
 - Periodically pulling to stay in sync
 
+## ⚠️ Safety: No Deletions
+**This skill NEVER deletes files from the local disk.** It only adds new files and updates existing ones.
+
+- If a skill exists locally but not in the repo, it is **left on disk** (it may be a work-in-progress or machine-specific)
+- If a skill exists in the repo but not locally, it is **added to disk**
+- If a skill exists in both places, the **repo version overwrites the local version** (repo is the source of truth for this direction)
+
+To explicitly remove a local skill, delete it manually with `Remove-Item`.
+
 ## Important: Path Resolution
-**NEVER hardcode a username in paths.** Always resolve dynamically:
+**NEVER hardcode a username in paths.** Always resolve the user's home directory dynamically:
+
+- **PowerShell:** Use `$env:USERPROFILE` (Windows) or `$HOME` (cross-platform)
+- The `.copilot` directory is always at `<home>/.copilot/`
 
 ```powershell
 $copilotDir = Join-Path $env:USERPROFILE ".copilot"
-```
-
-## Repository Location
-**Known location:** `C:\personal\skills-plugin-marketplace`
-**Clone URL:** `https://github.com/piusn/skills-plugin-marketplace.git`
-
-If not found, search common locations then ask the user:
-```powershell
-$candidates = @(
-    "C:\personal\skills-plugin-marketplace",
-    (Join-Path $env:USERPROFILE "skills-plugin-marketplace"),
-    (Join-Path $env:USERPROFILE "repos\skills-plugin-marketplace"),
-    (Join-Path $env:USERPROFILE "source\repos\skills-plugin-marketplace")
-)
-$repoDir = $candidates | Where-Object { Test-Path (Join-Path $_ ".git") } | Select-Object -First 1
-```
-
-If not found anywhere, clone it:
-```powershell
-git clone https://github.com/piusn/skills-plugin-marketplace.git "C:\personal\skills-plugin-marketplace"
+# Results in e.g. C:\Users\pingugi\.copilot on Windows
 ```
 
 ## Workflow
 
-### Step 1: Pull Latest from GitHub
-```powershell
-git -C $repoDir pull
-```
-If pull fails due to local changes, warn the user and suggest `git stash` or `git reset --hard origin/main`.
+### Step 1: Resolve Paths
+Determine the repository and local target paths:
 
-### Step 2: Ensure Local Target Directories Exist
 ```powershell
-@("skills", "instructions", "agents") | ForEach-Object {
-    New-Item -ItemType Directory -Path (Join-Path $copilotDir $_) -Force | Out-Null
-}
+$copilotDir = Join-Path $env:USERPROFILE ".copilot"
+$repoDir = "<repository-working-directory>"  # The current working directory of the repo
 ```
 
-### Step 3: Sync Skills (Full Mirror — GitHub is Source of Truth)
-GitHub wins. Add new skills, update changed skills, remove skills that no longer exist in the repo.
+**Standard clone location:** `C:\repositories\skills-plugin-marketplace`
+**Clone URL:** `https://github.com/piusn/skills-plugin-marketplace.git`
 
-⚠️ **CRITICAL: Use content-level copy to avoid directory nesting.**
+If the repo is not found at the current working directory, check the standard location above. If it doesn't exist anywhere, clone it first:
+```powershell
+git clone https://github.com/piusn/skills-plugin-marketplace.git "C:\repositories\skills-plugin-marketplace"
+```
+
+Verify the repo exists and has a remote:
+```powershell
+git -C $repoDir remote -v
+```
+
+### Step 2: Pull Latest from GitHub
+Ensure the local repository is up to date:
+
+```powershell
+git -C $repoDir pull --rebase
+```
+
+If the pull fails due to local changes, warn the user and suggest resolving conflicts first.
+
+### Step 3: Ensure Target Directories Exist
+Create the target directories if they don't exist (new machine scenario):
+
+```powershell
+$skillsTarget = Join-Path $copilotDir "skills"
+$instrTarget = Join-Path $copilotDir "instructions"
+$agentsTarget = Join-Path $copilotDir "agents"
+
+New-Item -ItemType Directory -Path $skillsTarget -Force | Out-Null
+New-Item -ItemType Directory -Path $instrTarget -Force | Out-Null
+New-Item -ItemType Directory -Path $agentsTarget -Force | Out-Null
+```
+
+### Step 4: Sync Skills (additive — no deletions)
+Copy skill directories from repo to local. Only adds new and updates existing — never deletes local-only skills:
 
 ```powershell
 $skillsSource = Join-Path $repoDir "skills"
-$skillsTarget = Join-Path $copilotDir "skills"
 
-$newSkills = @(); $updatedSkills = @(); $removedSkills = @(); $unchangedCount = 0
-$repoSkillNames = @()
-
-# Add new and update existing
+# DO NOT delete local skills that are missing from repo — they may be WIP or machine-specific
+# Only add/update skills from repo
 Get-ChildItem $skillsSource -Directory | ForEach-Object {
-    $skillName = $_.Name
-    $repoSkillNames += $skillName
-    $targetDir = Join-Path $skillsTarget $skillName
-
-    if (-not (Test-Path $targetDir)) {
-        # NEW — create directory and copy contents INTO it
-        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-        Copy-Item "$($_.FullName)\*" $targetDir -Recurse -Force
-        $newSkills += $skillName
-    } else {
-        # EXISTING — compare SKILL.md hashes
-        $repoFile = Join-Path $_.FullName "SKILL.md"
-        $localFile = Join-Path $targetDir "SKILL.md"
-        if ((Test-Path $repoFile) -and (Test-Path $localFile)) {
-            if ((Get-FileHash $repoFile -Algorithm MD5).Hash -ne (Get-FileHash $localFile -Algorithm MD5).Hash) {
-                Copy-Item "$($_.FullName)\*" $targetDir -Recurse -Force
-                $updatedSkills += $skillName
-            } else {
-                $unchangedCount++
-            }
-        }
-    }
-}
-
-# Remove local skills that no longer exist in GitHub
-Get-ChildItem $skillsTarget -Directory | ForEach-Object {
-    if ($_.Name -notin $repoSkillNames) {
-        Remove-Item $_.FullName -Recurse -Force
-        $removedSkills += $_.Name
-    }
+    Copy-Item $_.FullName "$skillsTarget\$($_.Name)" -Recurse -Force
 }
 ```
 
-> **Why `Copy-Item "$($_.FullName)\*"` instead of `Copy-Item $_.FullName`?**
-> `Copy-Item <folder> <existing-folder> -Recurse` creates a nested subfolder: `skills/close-day/close-day/SKILL.md`.
-> `Copy-Item <folder>\* <existing-folder> -Recurse` copies the CONTENTS into the target — correct behavior.
+### Step 5: Sync Instructions (additive — no deletions)
+Copy instruction files from repo to local. Only adds new and updates existing — never deletes local-only instructions:
 
-### Step 4: Sync Instructions (Full Mirror)
 ```powershell
 $instrSource = Join-Path $repoDir "instructions"
-$instrTarget = Join-Path $copilotDir "instructions"
 
-$newInstr = @(); $updInstr = @(); $removedInstr = @()
-$repoInstrNames = @()
-
-Get-ChildItem $instrSource -Filter "*.md" | ForEach-Object {
-    $repoInstrNames += $_.Name
-    $target = Join-Path $instrTarget $_.Name
-    if (-not (Test-Path $target)) {
-        Copy-Item $_.FullName $target -Force
-        $newInstr += $_.Name
-    } elseif ((Get-FileHash $_.FullName -Algorithm MD5).Hash -ne (Get-FileHash $target -Algorithm MD5).Hash) {
-        Copy-Item $_.FullName $target -Force
-        $updInstr += $_.Name
-    }
-}
-
-# Remove local instructions not in GitHub
-Get-ChildItem $instrTarget -Filter "*.md" | Where-Object { $_.Name -notin $repoInstrNames } | ForEach-Object {
-    Remove-Item $_.FullName -Force
-    $removedInstr += $_.Name
-}
+# DO NOT delete local instructions not in repo
+# Only add/update instructions from repo
+Copy-Item "$instrSource\*.md" $instrTarget -Force
 ```
 
-### Step 5: Sync Agents (Full Mirror)
+### Step 6: Sync Agents (additive — no deletions)
+Copy agent files from repo to local. Only adds new and updates existing — never deletes local-only agents:
+
 ```powershell
 $agentsSource = Join-Path $repoDir "agents"
-$agentsTarget = Join-Path $copilotDir "agents"
 
-$newAgents = @(); $updAgents = @(); $removedAgents = @()
-$repoAgentNames = @()
-
-Get-ChildItem $agentsSource -Filter "*.md" -ErrorAction SilentlyContinue | ForEach-Object {
-    $repoAgentNames += $_.Name
-    $target = Join-Path $agentsTarget $_.Name
-    if (-not (Test-Path $target)) {
-        Copy-Item $_.FullName $target -Force
-        $newAgents += $_.Name
-    } elseif ((Get-FileHash $_.FullName -Algorithm MD5).Hash -ne (Get-FileHash $target -Algorithm MD5).Hash) {
-        Copy-Item $_.FullName $target -Force
-        $updAgents += $_.Name
-    }
-}
-
-# Remove local agents not in GitHub
-Get-ChildItem $agentsTarget -Filter "*.md" -ErrorAction SilentlyContinue | Where-Object { $_.Name -notin $repoAgentNames } | ForEach-Object {
-    Remove-Item $_.FullName -Force
-    $removedAgents += $_.Name
-}
+# DO NOT delete local agents not in repo
+# Only add/update agents from repo
+Copy-Item "$agentsSource\*.md" $agentsTarget -Force
 ```
 
-### Step 6: Report Results
+### Step 7: Verify Installation
+Count what was installed and verify key files exist:
+
+```powershell
+$skillCount = (Get-ChildItem $skillsTarget -Directory).Count
+$instrCount = (Get-ChildItem $instrTarget -File -Filter "*.md").Count
+$agentCount = (Get-ChildItem $agentsTarget -File -Filter "*.md").Count
+```
+
+### Step 8: Report Results
+Present an installation summary:
+
 ```markdown
 ## ✅ Skills Synced from GitHub
 
-| Category | Total | New | Updated | Removed | Unchanged |
-|----------|-------|-----|---------|---------|-----------|
-| Skills | N | N | N | N | N |
-| Instructions | N | N | N | N | N |
-| Agents | N | N | N | N | N |
+| Category | Count | Location |
+|----------|-------|----------|
+| Skills | N | ~/.copilot/skills/ |
+| Instructions | N | ~/.copilot/instructions/ |
+| Agents | N | ~/.copilot/agents/ |
 
-### New
-- + skill-name
-
-### Updated
-- ~ modified-skill
-
-### Removed
-- - deleted-skill
-
-📂 Installed to: ~/.copilot/
-🔗 Source: https://github.com/piusn/skills-plugin-marketplace
+📂 Installed to: [resolved copilot directory path]
+🔗 Source: [repository remote URL]
 ```
 
-If nothing changed, report: "✅ Already up to date — local .copilot/ matches GitHub."
-
 ## Error Handling
-- **Repository not found:** Search known locations, then ask the user for the path. Clone as last resort.
-- **Pull fails:** Warn the user. Suggest `git stash` or `git reset --hard origin/main`.
-- **Source directory missing in repo:** Skip that category with a warning.
-- **No .copilot directory:** Create it — this is the new machine scenario.
-
-## Key Design Decisions
-
-### Full mirror (GitHub is source of truth)
-Local `.copilot/` is made to exactly match GitHub. Items removed from the repo are removed locally. If you have local-only WIP skills, push them to GitHub first using `sync-skills-to-github`.
-
-### Content-level copy (not folder copy)
-Always use `Copy-Item "$source\*" $target` instead of `Copy-Item $source $target` when the target folder already exists. This prevents the PowerShell nesting bug where `Copy-Item <folder> <existing-folder> -Recurse` creates `target/foldername/foldername/`.
-
-### Hash-based change detection
-MD5 hash comparison on `SKILL.md` detects actual content changes, providing accurate reporting of new vs updated vs unchanged.
+- **Repository not cloned:** Suggest cloning first: `git clone https://github.com/piusn/skills-plugin-marketplace.git`
+- **Pull conflicts:** Warn the user and suggest resolving manually or force-pulling with `git reset --hard origin/main`
+- **Source directory missing in repo:** Skip that category with a warning (e.g., "No agents/ directory in repo — skipping")
+- **Permission denied:** Suggest running with elevated permissions if target directory is restricted
+- **No .copilot directory:** Create it — this is the new machine scenario
 
 ## Tools & APIs Used
 - `powershell` — File operations and git commands
 - `git` — Version control operations
 
+## Output Format
+Summary table showing items installed and the resolved local path.
+
 ## Notes
-- This skill is **read-only on the repo** — it only modifies `~/.copilot/`, never commits or pushes
-- Always use `$env:USERPROFILE` or `$HOME` — never hardcode a username
-- Zip files and temporary artifacts in the skills directory are NOT synced
-- On a brand new machine, all directories are created automatically
+- **No deletions** — this skill only adds and updates, never removes files from the local disk
+- To remove a local skill, delete it manually with `Remove-Item`
+- Items that exist locally but not in the repo are left untouched (they may be WIP or machine-specific)
+- Always use `$env:USERPROFILE` or `$HOME` — never hardcode a username in paths
+- On a brand new machine, the `.copilot` directory and subdirectories are created automatically
+- The skill pulls from git first to ensure it's working with the latest version
