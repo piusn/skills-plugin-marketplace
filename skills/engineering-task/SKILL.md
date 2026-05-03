@@ -39,7 +39,7 @@ If implementation reveals the need for a broader architectural redesign, pause a
    - If this task involves significant architectural choices, suggest the `architecture-decision` skill to document the decision
 
 4. **Create the implementation plan:**
-   Before any code is written, create a plan document at `system-documentation/plan.md`:
+   Before any code is written, create a plan document at `docs/plans/implementation-plan-{short-desc}.md` (project-level) or `/docs/plans/implementation-plan-{short-desc}.md` (root-level for cross-project work):
    ```markdown
    # Implementation Plan: [Feature/Task Title]
 
@@ -91,7 +91,7 @@ If implementation reveals the need for a broader architectural redesign, pause a
 Use a `general-purpose` agent with `model: "claude-opus-4.6"` for thorough design:
 
 1. **Create technical design document:**
-   Save to `system-documentation/technical-design.md`:
+   Save to `docs/plans/technical-design-{short-desc}.md`:
    ```markdown
    # Technical Design: [Feature/Task Title]
 
@@ -416,7 +416,7 @@ Since the MCP is in active development, capture improvement feedback:
 2. ⛔ **NEVER change an existing test to make it pass without explicit user approval**
 3. ⛔ **No code ships without multi-model review**
 4. ⛔ **All code must be documented** — functions, classes, modules need docstrings; non-obvious logic needs inline comments
-5. ✅ **All plans, designs, and documentation live in `system-documentation/`** in the repository
+5. ✅ **All plans, designs, and documentation live in `docs/`** — plans in `docs/plans/`, features in `docs/features/`, decisions in `docs/decisions/`, etc.
 6. ✅ **All new code must have comprehensive unit tests** (happy path, edge cases, error paths, 80%+ coverage)
 7. ✅ **Design document must exist before implementation starts**
 8. ✅ **Staging validation before production merge**

@@ -142,7 +142,7 @@ Workflows should update `progress.json` at the start of each new phase. This ena
 {AI prompt content if available, otherwise "No AI prompt configured for this task."}
 
 ## Documentation
-All plans, designs, and documentation for this task live in `system-documentation/`.
+All plans, designs, and documentation for this task live in `docs/` (organized by type: plans, features, decisions, etc.).
 
 ## Definition of Done
 
@@ -385,11 +385,14 @@ All code changes must go through branches and pull requests:
   - Inform the user: *"Merged and switched to main. Do not continue on the old branch."*
 
 ### 6. Documentation Directory Convention
-All task artifacts — plans, designs, technical docs, user docs, testing docs — must be stored in `system-documentation/` within the repository. This includes:
-- Implementation plans
-- Technical design documents
-- Architecture decision records
-- API documentation
-- User guides
-- Testing documentation
-- Research findings
+All task artifacts must be stored in the appropriate `docs/` subdirectory within the repository:
+- Implementation plans, research plans, design proposals, system designs → `docs/plans/`
+- Feature documentation → `docs/features/`
+- Architecture decision records → `docs/decisions/`
+- Bug fix documentation → `docs/bugs/`
+- User guides → `docs/user-guides/`
+- Task documentation → `docs/tasks/`
+- Refactoring documentation → `docs/refactoring/`
+- Change requests → `docs/change-requests/`
+
+Use root-level `/docs/` for cross-project artifacts or project-level `{project}/docs/` for project-scoped work.

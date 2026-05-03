@@ -32,7 +32,7 @@ Use `explore` agents to answer these questions:
 - Is there a CI/CD pipeline? What does it do?
 - Are there any existing docs (README, wiki, /docs, comments)?
 
-Save initial findings to `system-documentation/00-overview.md`:
+Save initial findings to `docs/plans/system-design-{short-desc}.md` (or the project's `docs/plans/` directory):
 ```markdown
 # System Overview: [Product Name]
 
@@ -211,16 +211,20 @@ Document what's currently monitored (or what should be):
 ### Phase 6: Compile & Review
 
 #### 6.1 Document Structure
-Organize the output as a documentation set:
+Organize the output as a documentation set under the project's `docs/` directory:
 ```
-system-documentation/
-├── 00-overview.md           # System overview, quick facts, repo structure
-├── 01-architecture.md       # Component map, layers, dependency graph
-├── 02-api-reference.md      # REST APIs, events, internal contracts
-├── 03-data-model.md         # ER diagrams, data flows, state machines
-├── 04-infrastructure.md     # Deployment, config, monitoring
-├── 05-engineering-audit.md  # Gap analysis across all engineering concerns
-└── diagrams/                # Exported diagram images (if needed)
+docs/
+├── plans/
+│   └── system-design-{short-desc}.md   # System overview, quick facts, repo structure
+├── features/
+│   ├── 01-architecture.md       # Component map, layers, dependency graph
+│   ├── 02-api-reference.md      # REST APIs, events, internal contracts
+│   └── 03-data-model.md         # ER diagrams, data flows, state machines
+├── tasks/
+│   └── 04-infrastructure.md     # Deployment, config, monitoring
+├── decisions/
+│   └── 05-engineering-audit.md  # Gap analysis across all engineering concerns
+└── diagrams/                    # Exported diagram images (if needed)
 ```
 
 #### 6.2 Cross-Reference Validation
@@ -230,7 +234,7 @@ system-documentation/
 - Identify undocumented integration points
 
 #### 6.3 Engineering Audit & Gap Analysis
-Produce a comprehensive audit across all engineering-centric aspects. Save to `system-documentation/05-engineering-audit.md`:
+Produce a comprehensive audit across all engineering-centric aspects. Save to `docs/decisions/engineering-audit-{short-desc}.md`:
 
 ```markdown
 # Engineering Audit: [Product Name]

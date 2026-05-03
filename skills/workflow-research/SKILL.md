@@ -30,7 +30,7 @@ Research tasks require a different approach than building features. The goal is 
    - Identify key stakeholders who need the findings
 
 3. **Create research outline:**
-   Save to `system-documentation/research-plan.md`:
+   Save to `docs/plans/research-{short-desc}.md` (project-level) or `/docs/plans/research-{short-desc}.md` (root-level for cross-project research):
    ```markdown
    # Research: [Topic]
    
@@ -72,7 +72,7 @@ Use multiple sources in parallel:
 
 ### Phase 3: Synthesize
 1. **Organize findings:**
-   Create `system-documentation/findings.md`:
+   Create `docs/plans/research-{short-desc}-findings.md`:
    ```markdown
    # Research Findings: [Topic]
    

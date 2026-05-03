@@ -126,7 +126,7 @@ If the fix grows beyond this scope, escalate to the `engineering-task` skill.
 2. ✅ Run existing tests before committing
 3. ✅ All fix code must be documented (docstrings, inline comments for non-obvious logic)
 4. ✅ Mandatory 4-model completion review before marking done (see `start-task` Critical Rules §3)
-5. ✅ If the fix involves documentation changes, update files in `system-documentation/`
+5. ✅ If the fix involves documentation changes, update files in the appropriate `docs/` subdirectory
 6. ⛔ If scope exceeds 3 files or ~100 lines, escalate to engineering-task
 7. ⛔ NEVER modify existing tests to make them pass without asking
 8. ⛔ NEVER ship code without tests

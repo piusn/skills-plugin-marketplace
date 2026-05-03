@@ -300,3 +300,11 @@ For each threshold, define:
 | `notion-API-post-page` | Save capacity plans to Notion |
 | `DailyPlanner-create_task` | Create action items |
 | `ask_user` | Gather growth assumptions |
+
+## Output Location
+
+When working within a repository, save the capacity plan document to:
+- **Root-level:** `/docs/plans/capacity-plan-{short-desc}.md` (for cross-project or org-wide plans)
+- **Project-level:** `{project}/docs/plans/capacity-plan-{short-desc}.md` (for project-specific plans)
+
+Additionally save to Notion for team visibility using `notion-API-post-page`.

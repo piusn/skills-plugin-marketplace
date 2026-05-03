@@ -38,6 +38,7 @@ For every project (identified by `.csproj`, `package.json`, or similar project m
 | `docs/refactoring/README.md` | Refactoring documentation — rationale, scope, impact |
 | `docs/change-requests/README.md` | Change request documentation — scope changes, approvals |
 | `docs/decisions/README.md` | Architecture Decision Records (ADRs) — why we chose X over Y |
+| `docs/plans/README.md` | Plans — implementation plans, research plans, design proposals, system designs |
 
 ### Folder Structure
 
@@ -49,8 +50,31 @@ For every project (identified by `.csproj`, `package.json`, or similar project m
 ├── tasks/             ← v1.2-upgrade-to-net8.md
 ├── refactoring/       ← v1.1-consolidate-ef-data-layer.md
 ├── change-requests/   ← v1.3-CR-add-parent-package-field.md
-└── decisions/         ← ADR-0001-use-shared-ef-library.md
+├── decisions/         ← ADR-0001-use-shared-ef-library.md
+└── plans/             ← implementation-plan-user-dashboard.md, research-api-gateway.md
 ```
+
+There are two levels of `plans/` directories:
+
+**Root-level plans** (`/docs/plans/`):
+- Cross-cutting plans that span multiple projects (e.g., system designs, capacity plans, design proposals, migration roadmaps)
+- Named: `{plan-type}-{description}.md` (e.g., `system-design-event-pipeline.md`, `capacity-plan-q3-scaling.md`)
+
+**Project-level plans** (`{project}/docs/plans/`):
+- Plans scoped to a single project (e.g., implementation plans, research plans, refactoring plans)
+- Named: `{plan-type}-{description}.md` (e.g., `implementation-plan-user-dashboard.md`, `research-caching-strategy.md`)
+
+**Plan type prefixes:**
+
+| Prefix | Use Case | Example |
+|--------|----------|---------|
+| `implementation-plan-` | Engineering task implementation plans | `implementation-plan-auth-module.md` |
+| `research-` | Research plans and findings | `research-api-gateway-options.md` |
+| `system-design-` | System design documents | `system-design-event-pipeline.md` |
+| `design-proposal-` | Design proposals with migration roadmaps | `design-proposal-microservices-migration.md` |
+| `capacity-plan-` | Capacity planning documents | `capacity-plan-q3-scaling.md` |
+
+**Rule:** If a plan spans multiple projects or is solution-wide, it goes in `/docs/plans/`. If it's scoped to a single project, it goes in `{project}/docs/plans/`.
 
 ### File Naming & Versioning
 
@@ -65,6 +89,7 @@ All versioned documents use the pattern: `v{major}.{minor}-{short-description}.m
 | `refactoring/` | `v{version}-{description}.md` | `v1.1-consolidate-ef-data-layer.md` |
 | `change-requests/` | `v{version}-CR-{description}.md` | `v1.3-CR-add-parent-package-field.md` |
 | `decisions/` | `ADR-{nnnn}-{description}.md` | `ADR-0001-use-shared-ef-library.md` |
+| `plans/` | `{plan-type}-{description}.md` | `implementation-plan-user-dashboard.md` |
 
 ### Changelog Tracking
 
@@ -200,7 +225,8 @@ docs/
 ├── tasks/                   # Task documentation — upgrades, migrations (versioned)
 ├── refactoring/             # Refactoring documentation — rationale, scope (versioned)
 ├── change-requests/         # Change request documentation (versioned)
-└── decisions/               # Architecture Decision Records (ADRs)
+├── decisions/               # Architecture Decision Records (ADRs)
+└── plans/                   # Plans — implementation, research, design, capacity (prefixed by type)
 ```
 
 Each folder contains a `README.md` that describes the folder's purpose and lists its contents. This ensures the folder is always committed to git (no need for `.gitkeep`).
@@ -246,6 +272,9 @@ Create a solution-level docs index. If the solution already has docs, catalog th
 ## Feature Design
 {list or "No documents yet"}
 
+## Plans
+{list or "No documents yet — implementation plans, research plans, design proposals, and system designs go here"}
+
 ## Technical Documentation
 {list or "No documents yet"}
 
@@ -281,6 +310,7 @@ $docFolders = @(
     @{ Name = "refactoring"; Title = "Refactoring Documentation"; Desc = "Refactoring rationale, scope, and impact documentation.`nFiles are named: ``v{version}-{description}.md``" }
     @{ Name = "change-requests"; Title = "Change Requests"; Desc = "Change request documentation — scope changes, approvals, and impact.`nFiles are named: ``v{version}-CR-{description}.md``" }
     @{ Name = "decisions"; Title = "Architecture Decision Records"; Desc = "ADRs documenting why we chose X over Y.`nFiles are named: ``ADR-{nnnn}-{description}.md``" }
+    @{ Name = "plans"; Title = "Plans"; Desc = "Implementation plans, research plans, design proposals, system designs, and capacity plans.`nFiles are named: ``{plan-type}-{description}.md`` (e.g., ``implementation-plan-auth-module.md``, ``research-caching-strategy.md``)" }
 )
 
 foreach ($proj in $projects) {
@@ -337,6 +367,7 @@ This project follows the solution-level standards defined in:
 | `docs/refactoring/` | Refactoring documentation — rationale, scope, impact | `v{version}-{desc}.md` |
 | `docs/change-requests/` | Change request documentation — scope changes, approvals | `v{version}-CR-{desc}.md` |
 | `docs/decisions/` | Architecture Decision Records (ADRs) | `ADR-{nnnn}-{desc}.md` |
+| `docs/plans/` | Plans — implementation, research, design proposals, system designs | `{plan-type}-{desc}.md` |
 
 ## Versioning & Changelogs
 
@@ -356,6 +387,10 @@ This project follows the solution-level standards defined in:
 | **Refactoring** | Refactoring doc in `docs/refactoring/v{ver}-{desc}.md` if non-trivial |
 | **Change Request** | CR doc in `docs/change-requests/v{ver}-CR-{desc}.md` |
 | **Decision** | ADR in `docs/decisions/ADR-{nnnn}-{desc}.md` |
+| **Implementation Plan** | Plan in `docs/plans/implementation-plan-{desc}.md` |
+| **Research** | Plan in `docs/plans/research-{desc}.md` |
+| **System Design** | Plan in `docs/plans/system-design-{desc}.md` |
+| **Design Proposal** | Plan in `docs/plans/design-proposal-{desc}.md` |
 ```
 
 ### Step 7: Handle existing documentation
@@ -382,8 +417,8 @@ Write-Host "docs/*/README.md files: $readmes"
     if (Test-Path $_) { Write-Host "OK $_" } else { Write-Host "MISSING $_" }
 }
 
-# Verify all 7 doc folders have README.md per project
-$docFolders = @("bugs", "features", "user-guides", "tasks", "refactoring", "change-requests", "decisions")
+# Verify all 8 doc folders have README.md per project
+$docFolders = @("bugs", "features", "user-guides", "tasks", "refactoring", "change-requests", "decisions", "plans")
 # ... check each project's docs/ subfolders
 ```
 

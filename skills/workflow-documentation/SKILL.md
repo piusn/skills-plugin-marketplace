@@ -86,13 +86,17 @@ Good documentation is as important as good code. This workflow structures the do
 
 ### Phase 5: Publish
 1. **Determine publish location:**
-   - **Repository** — commit to `system-documentation/` within the repository
+   - **Repository** — commit to the appropriate `docs/` subdirectory within the repository:
+     - Plans → `docs/plans/`
+     - Feature docs → `docs/features/`
+     - User guides → `docs/user-guides/`
+     - Architecture decisions → `docs/decisions/`
    - **Notion** — create/update Notion pages for team knowledge
    - **eng.ms** — submit to EngineeringHub if it's a TSG or team doc
    - **Export** — use `markdown-to-word` or `md2pptx` for Office formats
 
 2. **Commit and link:**
-   - Commit documentation to the repo under `system-documentation/`
+   - Commit documentation to the repo under the appropriate `docs/` subdirectory
    - Link from relevant code files (README references)
    - Update any doc indexes or navigation
 

@@ -262,7 +262,7 @@ Document key decisions and their trade-offs:
 ### Phase 8: Design Document & Review
 
 1. **Compile the design document:**
-   Save to `system-documentation/system-design.md` combining all phases above
+   Save to `docs/plans/system-design-{short-desc}.md` (root-level `/docs/plans/` for cross-project designs) combining all phases above
 
 2. **Multi-model review** (same as engineering-task workflow):
    - **Architecture review** — `model: "gemini-3-pro-preview"`: Scalability and architecture fit

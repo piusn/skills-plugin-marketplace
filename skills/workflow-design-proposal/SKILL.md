@@ -235,15 +235,15 @@ Submit the proposal for review using parallel agents:
 3. **Feasibility** — `model: "claude-sonnet-4.6"`: Is the migration plan realistic? Dependencies?
 
 #### 6.2 Proposal Document
-Compile everything into `system-documentation/proposal.md`:
+Compile everything into `docs/plans/design-proposal-{short-desc}.md` (root-level `/docs/plans/` for cross-project proposals):
 ```
-system-documentation/
-├── proposal.md                    # Full proposal document
-├── current-state-architecture.md  # Current system documentation
-├── gap-analysis.md                # Detailed gap analysis
-├── proposed-architecture.md       # Proposed design with diagrams
-├── migration-roadmap.md           # Phased migration plan
-└── risk-register.md               # Risk assessment
+docs/plans/
+├── design-proposal-{short-desc}.md    # Full proposal document
+├── current-state-architecture.md      # Current system documentation
+├── gap-analysis.md                    # Detailed gap analysis
+├── proposed-architecture.md           # Proposed design with diagrams
+├── migration-roadmap.md               # Phased migration plan
+└── risk-register.md                   # Risk assessment
 ```
 
 #### 6.3 Presentation Deck
