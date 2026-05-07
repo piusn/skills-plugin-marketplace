@@ -41,14 +41,21 @@ ask_user:
 
 ### Step 2: Sync Sessions (if selected)
 
+First, determine the last sync date by querying the backend for the most recently synced session:
+
 ```
-DailyPlanner-sync_copilot_sessions(since: "{appropriate_date}")
+DailyPlanner-get_copilot_sessions()
 ```
 
-Default `since` behavior:
-- If time is morning (before noon): use yesterday's date
-- If time is afternoon/evening: use today's date
-- If user specifies a date range, use that instead
+Look at the most recent session's `Updated` or `Created` date. Use that date as the `since` parameter. If no sessions exist in the backend, omit `since` to do a full sync.
+
+Then sync:
+
+```
+DailyPlanner-sync_copilot_sessions(since: "{last_sync_date}")
+```
+
+**Important:** Do NOT use morning/afternoon heuristics or hardcoded dates. Always derive the `since` date from the backend's most recent session. This ensures no sessions are missed and no unnecessary re-syncing occurs.
 
 Report:
 ```
