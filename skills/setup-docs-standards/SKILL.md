@@ -34,7 +34,7 @@ For every project (identified by `.csproj`, `package.json`, or similar project m
 | `docs/bugs/README.md` | Bug fix documentation — root cause analysis, regression notes |
 | `docs/features/README.md` | Feature documentation — design, implementation notes |
 | `docs/user-guides/README.md` | User guides — how to use the tooling, workflows, tutorials |
-| `docs/tasks/README.md` | Task documentation — upgrades, migrations, one-off work items |
+| `docs/tasks/README.md` | Task documentation — upgrades, migrations, one-off work items (**not** the kanban board; see note below) |
 | `docs/refactoring/README.md` | Refactoring documentation — rationale, scope, impact |
 | `docs/change-requests/README.md` | Change request documentation — scope changes, approvals |
 | `docs/decisions/README.md` | Architecture Decision Records (ADRs) — why we chose X over Y |
@@ -53,6 +53,8 @@ For every project (identified by `.csproj`, `package.json`, or similar project m
 ├── decisions/         ← ADR-0001-use-shared-ef-library.md
 └── plans/             ← implementation-plan-user-dashboard.md, research-api-gateway.md
 ```
+
+> **Heads up — `docs/tasks/` is not the kanban board.** This folder holds *task documentation* (versioned write-ups for upgrades, migrations, one-off work items). The active kanban board (`backlog.md` / `inprogress.md` / etc.) lives in the central boards repository at `C:\boards\<board-name>\`. See the **start-task** skill's [Board Conventions](../start-task/SKILL.md#board-conventions) for details.
 
 There are two levels of `plans/` directories:
 
