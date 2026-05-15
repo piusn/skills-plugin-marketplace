@@ -104,6 +104,71 @@ If the session already hosts other active tasks (multi-task session):
 
 If the user starts in a fresh session for a single task, include the rename command in the instructions.
 
+### Step 1c: Review & Enrich (User Confirmation)
+
+**Before any state changes happen** (no DailyPlanner status flip, no worktree, no stage transition), surface the full task to the user and give them an explicit opportunity to add context. This catches missing screenshots, late-breaking acceptance criteria, and lets the user back out if the task isn't really what they want to work on.
+
+#### 1c.1 — Print the task
+
+Render the task using the same shape as `review-backlog` Inspect mode ([review-backlog Inspect](../review-backlog/SKILL.md#mode-inspect)), reading from the board entry (which was located in Step 0.5). Include:
+
+- Heading: `[<intId>] <title>`
+- Trace ID, Priority, Type, Tags, Created date, Elaboration level
+- `parallelizable` + `mutates.repos` + `mutates.paths`
+- DailyPlanner status + ObjectId
+- **Description** (full)
+- **Images / References** — list every existing attachment with its caption + relative path; print `_(none)_` when empty
+- **Definition of Done** — all four sub-sections (Acceptance Criteria, Validation Plan, Test Plan, Observability Plan), checked-state for each item, or `_Not yet elaborated._` placeholders
+- **Notes & Decisions** (newest first, last 5)
+- **Activity Log** (newest first, last 5)
+
+End the block with a one-line summary of what's missing:
+```
+Missing for full elaboration: Validation Plan, Test Plan, Observability Plan, mutates.paths
+```
+
+#### 1c.2 — Ask one explicit confirmation question
+
+```
+ask_user:
+  question: "About to start [{intId}] {title}. Anything to add or change first?"
+  choices:
+    - "Looks good — start (Recommended)"
+    - "Add screenshots / reference images"
+    - "Add notes or extra context"
+    - "Adjust acceptance criteria"
+    - "Fill in Validation / Test / Observability plans (recommended for P1/P2)"
+    - "Hold off — back to the backlog"
+```
+
+The default ("Looks good") proceeds to Step 2 with no further questions. Each other choice triggers a sub-flow described below. After the chosen sub-flow finishes, return to this prompt until the user picks "Looks good" or "Hold off".
+
+#### 1c.3 — Sub-flows
+
+| Choice | Sub-flow |
+|---|---|
+| **Add screenshots / reference images** | Ask: *"Paste image paths separated by commas (or drop a folder path to take everything in it)."* For each valid image: copy into `C:\boards\<board>\attachments\<traceId>\<seq>-<slug>.<ext>`, append to YAML `attachments:`, append a markdown image ref to the **Images / References** body section, and call `record-activity(taskId, kind="attachment-added", payload={path, caption})`. See [Step 2b in add-to-backlog](../add-to-backlog/SKILL.md#step-2b-capture-reference-images-optional-but-encouraged-for-featuresbugs) for the exact path/slug rules. |
+| **Add notes or extra context** | Free-form prompt: *"What's the extra context?"* Append a timestamped line to **Notes & Decisions** and `record-activity(taskId, kind="note", payload={text})`. Loop until user says "done". |
+| **Adjust acceptance criteria** | Show current Acceptance Criteria list; ask *"Add / remove / reword?"*. Edit the **Acceptance Criteria** sub-section under Definition of Done. Update `elaboration.acceptanceCriteria` count. |
+| **Fill in Validation / Test / Observability plans** | Hand off to `review-backlog`'s Plan mode ([Mode: Plan](../review-backlog/SKILL.md#mode-plan-flesh-out)) scoped to those three sub-sections. When it returns, update `elaboration.{validationPlanned,testPlanned,observabilityPlanned}` flags and the elaboration level. |
+| **Hold off — back to the backlog** | Do nothing else. Log `{timestamp} — start-task aborted by user at Review & Enrich step` to the Activity Log. Exit the skill cleanly so the user can reconsider or pick a different task. |
+
+Every sub-flow ends with `commit-board-change(<board>, "[<taskId>] start-task enrich: <action>")` so all pre-start enrichments are persisted to the boards repo before any state change happens.
+
+#### 1c.4 — P1/P2 gate
+
+If the user picks "Looks good" but the task is **P1 or P2** AND any of `validationPlanned` / `observabilityPlanned` is `false`, **warn before proceeding**:
+```
+⚠️ This is a P{1|2} item with no Validation Plan / Observability Plan yet.
+   Starting without them means you'll have to bolt them on at PR time
+   (where the pre-PR gate WILL block you).
+
+   Choose: plan now (recommended) / start anyway / hold off
+```
+"Start anyway" is allowed but logged: `{timestamp} — Started without {missing sub-plans}; user overrode P1/P2 gate`.
+
+Once the user confirms "Looks good" (and any P1/P2 gate has been resolved), proceed to Step 2.
+
 ### Step 2: Check for existing workspace (Resume Support)
 
 Before creating a new workspace, check if one already exists for this task:
