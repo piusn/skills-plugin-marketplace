@@ -13,6 +13,23 @@ Sets up a dedicated workspace for each Daily Planner task, tracks it on the kanb
 
 **⛔ Critical Rule: Every task is tracked on the board.** Every task gets its own board entry under `C:\boards\<board-name>\` and its own workspace. Multiple tasks may share a session; they must never share a board entry or workspace.
 
+> **🆕 MCP-canonical (Phase 2 of the [207] sync ADR):**
+> Daily Planner is the authoritative store for board state. Stage transitions
+> ("backlog" → "inprogress" → "inreview" → "completed") and metadata updates
+> MUST go through MCP tools first; the file board under `C:\boards\` is now
+> a synced snapshot.
+>
+> Key MCP tools used by this skill:
+>
+> - `move_task_stage(taskId, stage, rank?)` — moves the task between Kanban columns. The server enforces the state-rule contract (terminal stages auto-flip `Completed`).
+> - `update_task_board_metadata(taskId, ...)` — sets/updates BoardMetadata (elaboration, effort, workflow, parallelizable, mutates) when the workflow is detected or refined.
+> - `update_task_definition_of_done(taskId, ...)` / `POST /api/tasks/{id}/acceptance-criteria` — applies the DoD captured during planning.
+> - `append_task_note(taskId, content, kind='Decision')` — logs key decisions to the Notes & Decisions timeline.
+> - `link_related_tasks(taskId, otherTaskId)` — connects related work.
+> - `import_board_from_disk(boardPath)` / `export_board_to_disk(group, outputPath)` — round-trip the file board to/from Daily Planner. Used when migrating to MCP-only or for local snapshots.
+>
+> Existing helpers (`move-task`, `commit-board-change`, etc.) still write the disk snapshot. They now run **after** the equivalent MCP call so DP wins on conflicts.
+
 ## Instructions
 
 When the user wants to start working on a task, follow these steps in order:
@@ -208,7 +225,9 @@ Workflows should update `progress.json` at the start of each new phase. This ena
 ### Step 3: Start the task — DailyPlanner + Board
 
 1. Call `DailyPlanner-start_task` with the task ID to set status to "In Progress".
-2. **Move the task entry on the board** using `move-task(taskId, fromStage, toStage="inprogress", contextUpdates)`:
+2. **MCP: move the task to the `inprogress` stage** via `move_task_stage(taskId, "inprogress")`. This sets `Stage` on the TaskItem; the server enforces the state-rule contract (no auto-completion since inprogress is not terminal).
+3. **MCP: stamp dev linkage** via `update_task_board_metadata` (only if `capturedBy` is empty) and via the dev-metadata path — for now, stamp `session.id`, `session.name`, and (when available) `git.branch` by calling `DailyPlanner-update_task` with the relevant fields embedded in `devMetadata`.
+4. **Disk snapshot (optional)**: `move-task(taskId, fromStage, toStage="inprogress", contextUpdates)`:
    - If the task wasn't on the board, **create** the entry directly in `inprogress.md` populated from DailyPlanner.
    - If it was in `backlog.md`, cut it and append to `inprogress.md`.
    - Stamp these fields on the entry:
@@ -217,7 +236,7 @@ Workflows should update `progress.json` at the start of each new phase. This ena
      - `timestamps.startedAt` (now, ISO-8601 UTC)
      - `stage: in-progress`
    - Append a line to `Activity Log`: `{timestamp} — Started; session={name}; workflow=<tbd>`
-3. Push the updated entry back to DailyPlanner (`sync-with-daily-planner(taskId, mode=push)`) so status fields stay aligned.
+5. The `sync-with-daily-planner(taskId, mode=push)` helper is now superseded by the MCP calls in steps 2–3 — kept only as a fallback when MCP is unreachable.
 
 ### Step 4: Create the workspace directory
 
@@ -572,6 +591,7 @@ All code changes must go through branches and pull requests:
 - DailyPlanner remains the **system of record** for the task itself (priority, tags, description, due date)
 - On every skill invocation that touches a task: read board → act → write board → sync DP → **`commit-board-change()`**. No exceptions.
 - If the board and DailyPlanner disagree, follow the conflict rules in [Bi-directional Sync](#bi-directional-sync-with-dailyplanner) — never silently overwrite either side.
+- ⛔ **NEVER guess which board to use.** If the current repo or cwd has no `.board` pointer file, the skill must **explicitly** prompt the user to pick an existing board, create a new one, or cancel ([Board Name Derivation](#board-name-derivation)). Auto-deriving the board name from the repo directory name is forbidden — it has caused wrong-board writes in the past. The user always confirms the binding.
 
 ### 6b. Boards Repo Is Always Committed
 - ⛔ **NEVER** leave a board mutation uncommitted at the end of a tool turn.
@@ -579,6 +599,14 @@ All code changes must go through branches and pull requests:
 - The boards repo at `C:\boards\` is a high-frequency, append-only audit log — readability of its `git log` is part of the contract. Commit messages follow `chore(<board>): [<taskId>] <action> — <reason>`.
 - If a commit fails (no git identity, locked index, etc.) the helper surfaces the exact remediation command. The on-disk board write is still authoritative — the next successful mutation picks up the pending change.
 - Pushing to a remote is **never automatic** unless the session has explicitly opted in. The local audit log is the default guarantee.
+
+### 6c. Boards Are Always Backed Up Before Mutation
+- ⛔ **NEVER** mutate a stage file without first taking a snapshot via `backup-board()` ([Backup & Recovery](#backup--recovery)).
+- Backups go to `C:\boards\<board>\.backups\<utcStamp>-<opLabel>\` and contain all 5 stage files. Gitignored.
+- ✅ On successful `commit-board-change()` → `clear-backup(backupPath)` deletes the snapshot immediately. The local audit log (`git log`) is the long-term history; backups are short-term insurance against partial-edit failures only.
+- ⚠️ On failed mutation (parse error, edit conflict, write error, commit failure) → keep the backup, surface its path, and offer the user `restore-backup(backupPath)` as a recovery option.
+- Stale backups (older than 7 days, typically from crashed sessions) are pruned opportunistically at the start of every helper invocation. No background sweep required.
+- Pure-read helpers (`read-task-from-board`, `sync-with-daily-planner` in `pull` mode that doesn't write back) skip the backup — there's nothing to recover.
 
 ### 7. Documentation Directory Convention
 All task **documentation artifacts** (specs, plans, migration notes) live under `docs/` inside the repository:
@@ -624,17 +652,34 @@ single repo's lifecycle.
 
 #### Board Name Derivation
 
-`resolve-board-name()` runs every invocation:
+`resolve-board-name()` runs every invocation and **never guesses**. The skill must know the board explicitly before proceeding — a wrong board would silently bind work to the wrong place.
 
-1. **`.board` pointer file at repo root or cwd** → if present, read the first line; use it
-   verbatim if it points inside `C:\boards\`, else extract the board-name segment.
-2. **Code repository (cwd has a `git rev-parse --show-toplevel`)** → use the **repo directory
-   name** (`Split-Path -Leaf`) of the toplevel. Example: `C:\repositories\Sokokapu-Limited\trade-management-system`
-   → board name `trade-management-system`. Owner is **not** included — boards are local-only.
-3. **Non-code cwd** → ask the user for a board name once; default suggestion is the cwd
-   basename. Cache the answer in the `.board` pointer file so we never ask again.
+1. **`.board` pointer file at repo root or cwd** → if present and points inside `C:\boards\`, use it. Done.
 
-The full board path is `C:\boards\<board-name>\`.
+2. **No `.board` pointer** → enumerate existing boards under `C:\boards\` and prompt the user. The skill **does not** auto-derive a board name from the repo directory name; even if `C:\boards\<repo-dir-name>\` happens to exist, it is shown as a *suggestion*, never an auto-pick.
+
+   ```
+   ask_user:
+     question: "No `.board` pointer file at <repo-root-or-cwd>. Which board should we use?"
+     choices: [
+       "Use existing board: <repo-dir-name>           ← matching name; recommended if this is yours"
+       "Use existing board: <other-name-1>"
+       "Use existing board: <other-name-2>"
+       …
+       "Create a new board (I'll ask for the name)"
+       "Continue without a board (abort this skill run)"
+     ]
+   ```
+
+   Notes on rendering the choices:
+   - The "matching name" suggestion appears as the first existing-board choice **only when** a folder named the same as the repo directory already exists under `C:\boards\`. It's a hint, never an auto-pick — the user still has to click it.
+   - If `C:\boards\` is empty (or doesn't exist yet), the choices collapse to: `Create a new board`, `Continue without a board`.
+   - If the user picks "Create a new board", default the suggested name to the repo directory name (or cwd basename) but let them edit. After name confirmation, bootstrap the per-board folder via `resolve-board-root()`.
+   - "Continue without a board" returns `null` from `resolve-board-name()`. The calling skill must handle this gracefully — print *"⛔ No board to operate on; skill exiting."* and stop with no state changes.
+
+3. **Cache the choice** in a `.board` pointer file at the repo/cwd root (one-line path) so the prompt never repeats for this directory. The user can edit / delete `.board` to switch boards later.
+
+The full board path is `C:\boards\<board-name>\`. If `resolve-board-name()` returned `null`, the calling skill has already exited.
 
 #### Pointer File (`.board`)
 
@@ -670,9 +715,12 @@ machine — without polluting any work repo.
   # Per-board ephemeral state
   */.locks/
   */attachments/.tmp/
+  */.backups/
   ```
-  Locks are runtime-only (see Parallel Tasks). Attachments themselves **are** committed —
-  reference images and screenshots are part of the task context.
+  Locks are runtime-only (see Parallel Tasks). Backups are pre-mutation
+  snapshots cleared on successful commit (see [Backup & Recovery](#backup--recovery)).
+  Attachments themselves **are** committed — reference images and
+  screenshots are part of the task context.
 - **Commit cadence — every mutation, no exceptions**: the boards repo is committed
   after **every** board write. There is no "small enough to skip" change.
   Mutations that trigger a commit:
@@ -708,7 +756,8 @@ C:\boards\<board-name>\
 ├── blocked.md            — cannot proceed; waiting on something
 ├── completed.md          — done, kept for historical context
 ├── attachments\          — reference images, screenshots, per-trace subfolders
-└── .locks\               — runtime worktree locks (gitignored)
+├── .locks\               — runtime worktree locks (gitignored)
+└── .backups\             — pre-mutation snapshots, deleted on success (gitignored)
 ```
 
 A `_conflicts/` subfolder is created lazily to hold duplicates discovered during validation.
@@ -871,17 +920,21 @@ What instrumentation must be wired so this feature is **debuggable post-ship**. 
 
 ### Stage Transitions
 
-| From → To | Trigger | Helper Call |
-|---|---|---|
-| (none) → backlog | Task created in DailyPlanner; sync pulls it in | `move-task(id, null, "backlog")` |
-| backlog → inprogress | `start task {id}` invoked (Step 3) | `move-task(id, "backlog", "inprogress")` |
-| inprogress → inreview | PR opened; user says "ready for review" | `move-task(id, "inprogress", "inreview")` |
-| inreview → inprogress | Review requests changes | `move-task(id, "inreview", "inprogress")` |
-| any → blocked | User says "blocked"; DP status set to blocked | `move-task(id, X, "blocked")` |
-| blocked → previous | User says "unblocked" | `move-task(id, "blocked", priorStage)` |
-| inreview → completed | PR merged + DP status Completed | `move-task(id, "inreview", "completed")` |
+> Every transition is now executed via the `move_task_stage` MCP tool first
+> (DP-canonical), then the disk snapshot is updated via the existing
+> `move-task` helper (which writes the markdown files).
 
-Every transition appends an entry to `Activity Log` and updates the relevant `timestamps.*` field.
+| From → To | Trigger | MCP call (REQUIRED) | Disk-snapshot helper (optional) |
+|---|---|---|---|
+| (none) → backlog | Task created in DailyPlanner; sync pulls it in | (set on creation via `bulk_upsert_board_items`) | `move-task(id, null, "backlog")` |
+| backlog → inprogress | `start task {id}` invoked (Step 3) | `move_task_stage(id, "inprogress")` | `move-task(id, "backlog", "inprogress")` |
+| inprogress → inreview | PR opened; user says "ready for review" | `move_task_stage(id, "inreview")` | `move-task(id, "inprogress", "inreview")` |
+| inreview → inprogress | Review requests changes | `move_task_stage(id, "inprogress")` | `move-task(id, "inreview", "inprogress")` |
+| any → blocked | User says "blocked"; DP status set to blocked | `move_task_stage(id, "blocked")` | `move-task(id, X, "blocked")` |
+| blocked → previous | User says "unblocked" | `move_task_stage(id, priorStage)` | `move-task(id, "blocked", priorStage)` |
+| inreview → completed | PR merged + DP status Completed | `move_task_stage(id, "completed")` (server auto-flips Completed flag) | `move-task(id, "inreview", "completed")` |
+
+Every transition appends an entry to `Activity Log` and updates the relevant `timestamps.*` field. If the MCP call fails, the disk update is skipped — DP must reflect the change before disk does, never the other way around.
 
 ### Bi-directional Sync with DailyPlanner
 
@@ -913,18 +966,82 @@ Each entry tracks `dailyPlanner.lastSyncedAt`. On every sync:
 - `push` — board → DP only. Used after a board-driven change (transition, activity log).
 - `both` — Full reconcile. Used at task start and on user demand.
 
+### Backup & Recovery
+
+Every mutating helper takes a pre-mutation snapshot of the board's 5 stage files into `C:\boards\<board>\.backups\<utcStamp>-<opLabel>\`. On successful commit, the snapshot is deleted immediately. On failure, it's left behind so the user can restore.
+
+#### Flow
+
+```
+backup-board()  ──►  mutate stage files  ──►  commit-board-change()
+       │                                                │
+       │                                                ├─ success → clear-backup()
+       │                                                │
+       └───────── failure ─────────────────────────────┴─ keep backup; surface restore path
+```
+
+#### Properties
+
+| Property | Value |
+|---|---|
+| **Location** | `C:\boards\<board>\.backups\<utcStamp>-<opLabel>\` (per-board, gitignored) |
+| **Scope** | All 5 stage files (`backlog.md`, `inprogress.md`, `inreview.md`, `blocked.md`, `completed.md`). Cheap; covers cross-stage mutations. |
+| **Granularity** | One backup directory per **logical operation** (one `move-task` call ⇒ one backup, no matter how many file edits it makes internally). |
+| **Cleanup on success** | Immediate `Remove-Item -Recurse -Force <backupPath>` after `commit-board-change()` returns without error. |
+| **Cleanup on failure** | Keep the backup. Surface the path to the user with the `restore-backup()` recovery option. |
+| **Stale sweep** | At the start of every helper invocation, delete sibling backup directories whose timestamp prefix is older than 7 days. Cheap, idempotent, covers crash-orphaned backups. |
+| **Skipped for** | Pure-read helpers (`read-task-from-board`, `sync-with-daily-planner` in `pull` mode that doesn't write back). |
+
+#### Restore
+
+If the user reports a corrupted board or surfaces a failed mutation:
+
+1. List backups: `Get-ChildItem C:\boards\<board>\.backups\` — sorted newest first.
+2. Identify the failed operation's backup (timestamp + opLabel).
+3. Diff each stage file against its backup to confirm the regression.
+4. Restore with `Copy-Item -Force <backupPath>\*.md C:\boards\<board>\`.
+5. Stage + commit the restore via `commit-board-change(<board>, "restore from backup <stamp>")`.
+
+Backups are **short-term insurance**, not long-term history. The boards repo's `git log` is the canonical audit trail.
+
 ### Helper Operations
 
 These are the named operations the skill performs. They're documented here as logical functions; the skill executes them inline using the `view`/`edit`/`grep` tools and DailyPlanner MCP calls.
 
-#### `resolve-board-root() → path`
+Every helper that **mutates** the boards (writes to any stage file, edits a YAML block, appends an Activity Log line, etc.) wraps its work in the [Backup & Recovery](#backup--recovery) flow: `backup-board` first, mutate, `commit-board-change`, `clear-backup` on success. Pure-read helpers (`read-task-from-board`, `sync-with-daily-planner` in `pull` mode) skip the backup.
+
+#### `backup-board(board, opLabel) → backupPath`
+
+Snapshots the 5 stage files into a timestamped sub-folder under `C:\boards\<board>\.backups\` **before** any mutating helper changes them on disk. Cheap insurance against partial-edit corruption — if a multi-file mutation fails halfway, the user can restore from the snapshot.
+
+1. Compute `<utcStamp>` = `yyyyMMddTHHmmssZ` (UTC, sortable).
+2. `<backupPath>` = `C:\boards\<board>\.backups\<utcStamp>-<opLabel>\` (e.g. `.backups\20260515T155500Z-move-task-187\`).
+3. Ensure `C:\boards\<board>\.backups\` exists (gitignored — see [`.gitignore`](#central-boards-repository)).
+4. Copy the 5 stage files (`backlog.md`, `inprogress.md`, `inreview.md`, `blocked.md`, `completed.md`) into `<backupPath>`. Skip any that don't exist.
+5. Run a **stale sweep** on each invocation: `Remove-Item -Recurse` any sibling backup directory whose timestamp prefix is older than 7 days. Idempotent and cheap.
+6. Return `<backupPath>` to the caller so it can pass it to `clear-backup` on success.
+
+If step 4 fails (disk full, permission), surface the error and **abort the mutation** — the caller must not proceed without a backup.
+
+#### `clear-backup(backupPath) → void`
+
+Deletes the backup directory **after** the mutation has been verified successful (typically right after `commit-board-change` returns without error).
+
+1. `Remove-Item -Recurse -Force <backupPath>` (best-effort).
+2. If the delete fails, log a single warning with the path — non-blocking. The next stale sweep will clean it up.
+
+#### `restore-backup(backupPath)`
+
+Manual recovery only — surfaced to the user when a mutation fails. Restores the 5 stage files from `<backupPath>` back to `C:\boards\<board>\`. Not called automatically; the user always confirms.
+
+#### `resolve-board-root() → path | null`
 1. **Resolve the board name** via `resolve-board-name()` (see [Board Name Derivation](#board-name-derivation)):
    - Prefer `.board` pointer file if present.
-   - Else use the repo directory name (from `git rev-parse --show-toplevel`).
-   - Else prompt the user (non-code cwd) and cache the answer in `.board`.
+   - Else **prompt the user explicitly** — no guessing. The user picks an existing board, creates a new one (with a name they confirm), or cancels.
+   - If the user cancels with "Continue without a board", `resolve-board-name()` returns `null` and **this helper returns `null` as well**. The calling skill must print *"⛔ No board to operate on; skill exiting."* and stop with no state changes.
 2. **Compute the board path**: `C:\boards\<board-name>\`.
 3. **Bootstrap `C:\boards\` itself** if missing (see [Central Boards Repository](#central-boards-repository)): create the directory, run `git init`, write `README.md` + `.gitignore`. Call `commit-board-change(boards-root, "init boards root")`.
-4. **Bootstrap the per-board folder**: create folder + 5 stage files + `attachments/` + `.locks/` + board-specific `README.md` in parallel if any are missing. Idempotent.
+4. **Bootstrap the per-board folder**: create folder + 5 stage files + `attachments/` + `.locks/` + `.backups/` + board-specific `README.md` in parallel if any are missing. Idempotent.
 5. **Bootstrap the `.board` pointer file** at the repo root (or cwd) if missing — write the resolved path as the single line.
 6. If the per-board folder didn't exist before this call → also run [Seed & Migration](#seed--migration).
 7. Call `commit-board-change(<board>, "bootstrap board folder")` if any new file was created in step 4 or 5. (No-op if nothing changed.)
@@ -937,13 +1054,15 @@ These are the named operations the skill performs. They're documented here as lo
 4. If not found, return `null`.
 
 #### `move-task(taskId, fromStage, toStage, contextUpdates) → void`
-1. Read the entry from `fromStage.md` (or generate a new one if `fromStage == null`).
-2. Apply `contextUpdates` (merge into YAML; append to Activity Log).
-3. Set `stage: <toStage>` and the relevant `timestamps.*` field.
-4. Append a transition log line: `{timestamp} — Transition {fromStage} → {toStage}; {reason}`.
-5. **Atomically**: append to `toStage.md` first, then remove from `fromStage.md`. (If a crash happens between, the duplicate-detection step on next read will reconcile.)
-6. Call `sync-with-daily-planner(taskId, mode=push)`.
-7. Call `commit-board-change(board, "[{taskId}] {fromStage} → {toStage}")`.
+1. **Take a backup** via `backup-board(board, "move-task-<taskId>-<from>-<to>")` ([Backup & Recovery](#backup--recovery)).
+2. Read the entry from `fromStage.md` (or generate a new one if `fromStage == null`).
+3. Apply `contextUpdates` (merge into YAML; append to Activity Log).
+4. Set `stage: <toStage>` and the relevant `timestamps.*` field.
+5. Append a transition log line: `{timestamp} — Transition {fromStage} → {toStage}; {reason}`.
+6. **Atomically**: append to `toStage.md` first, then remove from `fromStage.md`. (If a crash happens between, the duplicate-detection step on next read will reconcile.)
+7. Call `sync-with-daily-planner(taskId, mode=push)`.
+8. Call `commit-board-change(board, "[{taskId}] {fromStage} → {toStage}")`.
+9. On commit success → `clear-backup(backupPath)`. On commit failure → keep backup and surface its path.
 
 #### `sync-with-daily-planner(taskId, mode) → SyncResult`
 1. Resolve the entry via `read-task-from-board`.
@@ -968,9 +1087,12 @@ Appends to the entry without changing stage. Examples:
 | `decision` | `{ text }` | Append timestamped line to `Notes & Decisions` (prefixed `Decision:`) |
 | `attachment-added` | `{ path, caption }` | Append to `Images / References`; activity log line |
 
-After every call:
-1. Push to DP via `sync-with-daily-planner(taskId, mode=push)`.
-2. `commit-board-change(board, "[{taskId}] activity-log: {kind} {short-summary}")`.
+For every call:
+1. `backup-board(board, "record-activity-<taskId>-<kind>")` ([Backup & Recovery](#backup--recovery)).
+2. Apply the entry mutation (in-place edit to the relevant stage file).
+3. Push to DP via `sync-with-daily-planner(taskId, mode=push)`.
+4. `commit-board-change(board, "[{taskId}] activity-log: {kind} {short-summary}")`.
+5. On commit success → `clear-backup(backupPath)`. On failure → keep backup; surface path.
 
 #### `commit-board-change(board, message) → void`
 The single chokepoint that persists every board mutation to the central boards repo. **Every helper above ends with a call to this function.**

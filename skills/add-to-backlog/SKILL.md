@@ -11,6 +11,20 @@ description: >
 
 Quick-capture skill for new ideas, tasks, bugs, and features. Creates a fully-tracked entry in **one round-trip** with the user, then both DailyPlanner and the board reflect it.
 
+> **🆕 MCP-canonical (Phase 2 of the [207] sync ADR):**
+> Daily Planner is now the authoritative store for board items. Skills MUST
+> call MCP tools to persist board metadata. The file board under
+> `C:\boards\<board>\*.md` is kept in sync **as an optional disk snapshot**
+> during the transition window and can be regenerated at any time via
+> `export_board_to_disk`. New flow per capture:
+>
+> 1. `DailyPlanner-create_task(title, description, priority, type, tags)` — creates the task
+> 2. `update_task_board_metadata(taskId, level='Minimal', estimatedEffort='Unknown', proposedWorkflow=null, parallelizable=null, capturedBy='add-to-backlog')` — records planning metadata
+> 3. `bulk_upsert_board_items` with one item — sets `group`, `stage='backlog'`, `traceId` (idempotent on traceId)
+> 4. Append to `backlog.md` on disk — **optional**, only as a local snapshot; never gates success
+>
+> When Daily Planner is unreachable, skip step 4 and surface the error.
+
 ## When to Use
 
 | User says | Action |
@@ -26,20 +40,23 @@ Quick-capture skill for new ideas, tasks, bugs, and features. Creates a fully-tr
 
 ### Step 1: Resolve the board
 
-Reuse the `resolve-board-root` helper from the **start-task** skill ([Board Conventions](../start-task/SKILL.md#board-conventions)):
-- All boards resolve to `C:\boards\<board-name>\` — code repos and non-code cwd alike.
-- The board name comes from the `.board` pointer file at the repo/cwd root, falling back to the repo directory name, then to a user prompt for fresh non-code cwd.
-- If `C:\boards\` itself doesn't exist yet, it is initialized as a git repository ([Central Boards Repository](../start-task/SKILL.md#central-boards-repository)).
-- Bootstrap the per-board folder + 5 stage files + `attachments/` + `.locks/` + `README.md` in parallel if missing.
-- Create the `.board` pointer file at the repo/cwd root if missing.
+Reuse the `resolve-board-root` helper from the **start-task** skill ([Board Conventions](../start-task/SKILL.md#board-conventions), [Board Name Derivation](../start-task/SKILL.md#board-name-derivation)).
 
-**Non-code cwd (e.g., `personal-copilot`):** when the cwd has no git root, ask the user once:
+⛔ **The helper never guesses which board to use.** When the cwd / repo has no `.board` pointer file, it prompts the user explicitly: pick an existing board from `C:\boards\`, create a new one (with a confirmed name), or cancel. Auto-deriving the board name from the repo directory is forbidden.
+
+If `resolve-board-root()` returns `null` (user chose "Continue without a board"), exit this skill immediately:
+
 ```
-ask_user:
-  question: "No git repo here. What board should this idea live in?"
-  choices: ["personal-copilot (current cwd)", "<cwd basename> (Recommended)", "personal"]
+⛔ No board configured for this repository.
+   Re-run `add to backlog` once you've either created a board or pointed the
+   repo at an existing one (e.g. write the path to `<repo-root>/.board`).
 ```
-Cache the chosen name in `.board` at the cwd root so the prompt never repeats.
+
+Otherwise:
+- All boards resolve to `C:\boards\<board-name>\` — code repos and non-code cwd alike.
+- If `C:\boards\` itself doesn't exist yet, it is initialized as a git repository ([Central Boards Repository](../start-task/SKILL.md#central-boards-repository)).
+- Bootstrap the per-board folder + 5 stage files + `attachments/` + `.locks/` + `.backups/` + `README.md` in parallel if missing.
+- Create the `.board` pointer file at the repo/cwd root only after the user has confirmed the board choice.
 
 ### Step 2: Gather the minimum required fields
 
@@ -112,9 +129,17 @@ Generate a short UUID-style identifier:
 - Must be unique across all stage files — grep all 5 stage files for the candidate before committing. Regenerate on collision.
 - The trace ID is **immutable** for the life of the entry; it follows the task across systems (board, DP comments, commit messages, PR descriptions).
 
-### Step 5: Build & append the backlog entry
+### Step 5: Persist to Daily Planner via MCP (then snapshot to disk)
 
-Construct the entry per the [Entry Format](../start-task/SKILL.md#entry-format) with these defaults for a fresh backlog item:
+**5a. Push board metadata to Daily Planner (REQUIRED).** Use the new MCP tools so the new task is fully populated on the board:
+
+1. `bulk_upsert_board_items(boardId=null, itemsJson=[{ traceId, title, group: <board-name>, stage: "backlog", priority, type, tags, status: "New", description }])` — this is idempotent on `traceId` and sets the Group / Stage / TraceId fields the Tasks-page Kanban needs. (Internally calls `POST /api/tasks/bulk-upsert`.)
+2. `update_task_board_metadata(taskId, level="Minimal", estimatedEffort=null, proposedWorkflow=null, parallelizable=null, capturedBy="add-to-backlog")` — populates the `boardMetadata` subdocument.
+3. If Step 2c captured acceptance criteria, call `update_task_definition_of_done(taskId, ...)` (or append criteria one at a time via `POST /api/tasks/{id}/acceptance-criteria`).
+
+If any MCP call fails, surface the error and stop — the disk snapshot in 5b is optional.
+
+**5b. Snapshot to disk (OPTIONAL, for skill workflows that still read the file board).** Construct the entry per the [Entry Format](../start-task/SKILL.md#entry-format) with these defaults for a fresh backlog item:
 
 ```yaml
 taskId: {integer from DP}
@@ -205,7 +230,9 @@ _(none yet)_
 - {timestamp} — Captured via add-to-backlog; traceId={traceId}{; attached N image(s) if any}
 ```
 
-Append the entry to `backlog.md` (after the file header, separated by `---`). Then call `commit-board-change(<board>, "[{taskId}] add-to-backlog: {short-title}")` so the new entry is persisted to the central boards repo immediately. ([Helper Operations](../start-task/SKILL.md#helper-operations))
+Append the entry to `backlog.md` (after the file header, separated by `---`) **under the [Backup & Recovery](../start-task/SKILL.md#backup--recovery) flow**: call `backup-board(<board>, "add-to-backlog-<taskId>")` before the append, then `commit-board-change(<board>, "[{taskId}] add-to-backlog: {short-title}")` so the new entry is persisted to the central boards repo immediately, then `clear-backup(backupPath)` on commit success. ([Helper Operations](../start-task/SKILL.md#helper-operations))
+
+> The on-disk file is just a snapshot now — Daily Planner (step 5a) is the source of truth. If disk writes fail, log a warning and continue; the snapshot can be regenerated any time via the `export_board_to_disk` MCP tool.
 
 ### Step 6: Confirm
 

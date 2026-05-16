@@ -11,6 +11,18 @@ description: >
 
 Three-mode skill for working with the backlog: **list** (overview), **inspect** (details), and **plan** (flesh out a thin idea into a work-ready task).
 
+> **🆕 MCP-canonical (Phase 2 of the [207] sync ADR):**
+> Daily Planner is the authoritative store. Reads can come from either disk
+> or DP, but **writes go through MCP first**. The file board is an optional
+> snapshot kept in sync during the transition.
+>
+> Required MCP tools for each mode:
+>
+> - **List**: `list_board_items(boardId, stage?)` (groups by stage) OR read tasks directly via the existing tools, filtering by `group`.
+> - **Inspect**: existing `DailyPlanner-get_task(id)` returns the full task with all the new subdocuments (BoardMetadata, DefinitionOfDone, DevMetadata, NotesAndDecisions).
+> - **Plan**: `update_task_board_metadata(taskId, level, estimatedEffort, proposedWorkflow, parallelizable, mutates.repos, mutates.paths)` for the elaboration update; `append_task_note(taskId, content, kind='Decision')` for decision logging; `link_related_tasks(taskId, otherTaskId)` for related items.
+> - **Drop**: `move_task_stage(taskId, 'completed')` then update DP `status` to `'Cancelled'` via the existing `DailyPlanner-update_task`. The state-rule contract auto-marks `Completed=true`.
+
 ## When to Use
 
 | User says | Mode |
@@ -27,7 +39,19 @@ Three-mode skill for working with the backlog: **list** (overview), **inspect** 
 
 ### Step 0: Resolve the board
 
-Reuse the `resolve-board-root` helper from **start-task** ([Board Conventions](../start-task/SKILL.md#board-conventions)). All boards live at `C:\boards\<board-name>\`. Bootstrap if missing (creates the central boards repo, the per-board folder, and the `.board` pointer file at the repo/cwd root). If the board is empty, inform the user and suggest `add-to-backlog`.
+Reuse the `resolve-board-root` helper from **start-task** ([Board Conventions](../start-task/SKILL.md#board-conventions), [Board Name Derivation](../start-task/SKILL.md#board-name-derivation)).
+
+⛔ **The helper never guesses which board to use.** When the cwd / repo has no `.board` pointer file, it prompts the user explicitly with the list of existing boards under `C:\boards\` plus options to create a new board or to cancel. Auto-deriving the board from the repo directory name is **forbidden**.
+
+If `resolve-board-root()` returns `null` (user chose "Continue without a board"), exit this skill immediately:
+
+```
+⛔ No board configured for this repository.
+   Re-run `review backlog` once you've either created a board or pointed the
+   repo at an existing one (e.g. write the path to `<repo-root>/.board`).
+```
+
+Otherwise: all boards resolve to `C:\boards\<board-name>\`. Bootstrap if missing (creates the central boards repo, the per-board folder, and the `.board` pointer file at the repo/cwd root). If the board is empty, inform the user and suggest `add-to-backlog`.
 
 ### Step 1: Detect mode from user request
 
@@ -202,9 +226,17 @@ Suggested probing questions:
 
 **Skip questions** when the answer is already populated and accurate. Templates for filling out the Observability Plan live in [Observability Templates](../start-task/SKILL.md#observability-templates).
 
-### Step P4: Update the entry in place
+### Step P4: Update the entry — Daily Planner first, then snapshot to disk
 
-Apply all answers to the YAML and prose sections:
+**P4a. Push the elaboration to Daily Planner (REQUIRED).** Use the new MCP tools:
+
+1. `update_task_board_metadata(taskId, level={minimal|partial|full}, estimatedEffort={small|medium|large|unknown}, proposedWorkflow=<answer>, parallelizable=<bool>, capturedBy="review-backlog", repos=<comma-list>, paths=<comma-list>)` — single call sets all the planning fields.
+2. For each acceptance criterion captured in Step P3.6, call `POST /api/tasks/{taskId}/acceptance-criteria` (or use `update_task_definition_of_done` to set the full DoD subdocument).
+3. For each `Notes & Decisions` line captured (e.g. workflow choice), call `append_task_note(taskId, content, kind='Decision')`.
+4. For related-task links established in P3.10, call `link_related_tasks(taskId, otherTaskId)` for each.
+5. Update DP task description if the description was expanded (existing `DailyPlanner-update_task`).
+
+**P4b. Snapshot to disk (OPTIONAL).** Apply all answers to the YAML and prose sections:
 - Update `elaboration.level` (`minimal` → `partial` or `full` depending on completeness)
 - Update `elaboration.estimatedEffort`, `elaboration.proposedWorkflow`, `elaboration.acceptanceCriteria` (count)
 - Replace **Description** if expanded
@@ -214,6 +246,10 @@ Apply all answers to the YAML and prose sections:
 - Update `relatedTasks: [...]` if links were established
 - Push changes to DailyPlanner via `sync-with-daily-planner(taskId, mode=push)` ([sync rules](../start-task/SKILL.md#bi-directional-sync-with-dailyplanner))
 - Persist to the central boards repo via `commit-board-change(<board>, "[{taskId}] review-backlog: elaborate to {level}")` ([Helper Operations](../start-task/SKILL.md#helper-operations))
+
+**All file mutations in this step run under the [Backup & Recovery](../start-task/SKILL.md#backup--recovery) flow**: call `backup-board(<board>, "review-backlog-plan-<taskId>")` before the first edit and `clear-backup(backupPath)` only after `commit-board-change()` returns successfully.
+
+> The disk write is now a snapshot of state that already exists in Daily Planner (P4a). If disk fails, log a warning and continue — the snapshot can be regenerated via `export_board_to_disk`.
 
 ### Step P5: Offer next action
 
