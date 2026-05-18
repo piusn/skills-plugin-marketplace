@@ -72,7 +72,10 @@ def add_styled_table(doc, headers, rows):
         cell = table.rows[0].cells[i]
         cell.text = ''
         p = cell.paragraphs[0]
-        run = p.add_run(text)
+        # Strip markdown markers from header text (e.g., **Bold** → Bold)
+        clean = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+        clean = re.sub(r'`(.+?)`', r'\1', clean)
+        run = p.add_run(clean)
         run.bold = True
         run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
         run.font.size = Pt(10)
@@ -87,10 +90,13 @@ def add_styled_table(doc, headers, rows):
             cell = row.cells[c_idx]
             cell.text = ''
             p = cell.paragraphs[0]
-            run = p.add_run(str(text).strip())
-            run.font.size = Pt(10)
-            run.font.name = FONT_BODY
-            run.font.color.rgb = BODY_COLOR
+            apply_inline_formatting(p, str(text).strip())
+            # Ensure default font size on any runs added by inline formatting
+            for run in p.runs:
+                if not run.font.size:
+                    run.font.size = Pt(10)
+                if not run.font.name:
+                    run.font.name = FONT_BODY
             if r_idx % 2 == 1:
                 shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{ALT_ROW_BG}"/>')
                 cell._tc.get_or_add_tcPr().append(shading)
@@ -114,9 +120,9 @@ def add_divider(doc):
 
 
 def apply_inline_formatting(paragraph, text):
-    """Parse inline Markdown formatting (bold, italic, code) and add runs."""
-    # Pattern to match **bold**, *italic*, _italic_, `code`, and plain text
-    pattern = r'(\*\*(.+?)\*\*|_\((.+?)\)_|_(.+?)_|\*(.+?)\*|`(.+?)`)'
+    """Parse inline Markdown formatting (bold, italic, code, links) and add runs."""
+    # Pattern to match **bold**, *italic*, _italic_, `code`, [link](url), and plain text
+    pattern = r'(\*\*(.+?)\*\*|_\((.+?)\)_|_(.+?)_|\*(.+?)\*|`(.+?)`|\[([^\]]+)\]\(([^)]+)\))'
     last_end = 0
 
     for match in re.finditer(pattern, text):
@@ -155,6 +161,17 @@ def apply_inline_formatting(paragraph, text):
             run = paragraph.add_run(match.group(6))
             run.font.name = FONT_CODE
             run.font.size = Pt(10)
+        elif match.group(7) is not None:  # [text](url) — render text styled as a link
+            link_text = match.group(7)
+            link_url = match.group(8)
+            run = paragraph.add_run(link_text)
+            run.font.size = BODY_SIZE
+            run.font.name = FONT_BODY
+            # Style as a hyperlink (blue, underline) but don't embed a real hyperlink
+            # to avoid complications with internal anchors that don't resolve in docx.
+            if not link_url.startswith('#'):
+                run.font.color.rgb = HEADING_COLOR
+                run.underline = True
 
         last_end = match.end()
 
