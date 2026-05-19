@@ -54,7 +54,7 @@ For every project (identified by `.csproj`, `package.json`, or similar project m
 └── plans/             ← implementation-plan-user-dashboard.md, research-api-gateway.md
 ```
 
-> **Heads up — `docs/tasks/` is not the kanban board.** This folder holds *task documentation* (versioned write-ups for upgrades, migrations, one-off work items). The active kanban board (`backlog.md` / `inprogress.md` / etc.) lives in the central boards repository at `C:\boards\<board-name>\`. See the **start-task** skill's [Board Conventions](../start-task/SKILL.md#board-conventions) for details.
+> **Heads up — `docs/tasks/` is not the kanban board.** This folder holds *task documentation* (versioned write-ups for upgrades, migrations, one-off work items). The active kanban board lives in **Daily Planner** (issue #37 retired the file-board snapshot at `C:\boards\`). See the **start-task** skill's [MCP-ONLY MODE](../start-task/SKILL.md) banner for the canonical flow.
 
 There are two levels of `plans/` directories:
 

@@ -11,17 +11,47 @@ description: >
 
 Three-mode skill for working with the backlog: **list** (overview), **inspect** (details), and **plan** (flesh out a thin idea into a work-ready task).
 
-> **🆕 MCP-canonical (Phase 2 of the [207] sync ADR):**
-> Daily Planner is the authoritative store. Reads can come from either disk
-> or DP, but **writes go through MCP first**. The file board is an optional
-> snapshot kept in sync during the transition.
+> **🚀 MCP-ONLY MODE (issue #37, effective 2026-05-19):**
+> Daily Planner is the **sole** source of truth. The on-disk file board
+> under `C:\boards\<group>\*.md` is **retired** — do not read or write it.
+> The "resolve the board" / `.board` pointer file dance below is **deprecated**.
 >
-> Required MCP tools for each mode:
+> **New canonical flow:**
 >
-> - **List**: `list_board_items(boardId, stage?)` (groups by stage) OR read tasks directly via the existing tools, filtering by `group`.
-> - **Inspect**: existing `DailyPlanner-get_task(id)` returns the full task with all the new subdocuments (BoardMetadata, DefinitionOfDone, DevMetadata, NotesAndDecisions).
-> - **Plan**: `update_task_board_metadata(taskId, level, estimatedEffort, proposedWorkflow, parallelizable, mutates.repos, mutates.paths)` for the elaboration update; `append_task_note(taskId, content, kind='Decision')` for decision logging; `link_related_tasks(taskId, otherTaskId)` for related items.
-> - **Drop**: `move_task_stage(taskId, 'completed')` then update DP `status` to `'Cancelled'` via the existing `DailyPlanner-update_task`. The state-rule contract auto-marks `Completed=true`.
+> - **List**: `DailyPlanner-get_tasks` filtered by `stage='backlog'` and optionally `group='<board-name>'`. The default `group` is the cwd basename; the user can override.
+> - **Inspect**: `DailyPlanner-get_task(id)` returns the full task with all subdocuments (`BoardMetadata`, `DefinitionOfDone`, `DevMetadata`, `NotesAndDecisions`).
+> - **Plan**:
+>   - `DailyPlanner-update_task_board_metadata(taskId, level, estimatedEffort, proposedWorkflow, parallelizable, mutates.repos, mutates.paths)` — elaboration update.
+>   - `DailyPlanner-update_task_definition_of_done(taskId, ...)` — DoD subdocument.
+>   - `DailyPlanner-append_task_note(taskId, content, kind='Decision')` — decision logging.
+>   - `DailyPlanner-link_related_tasks(taskId, otherTaskId)` — related items.
+> - **Drop**: `DailyPlanner-move_task_stage(taskId, 'completed')` + `DailyPlanner-update_task(id, status='Cancelled')`. The state-rule contract auto-marks `Completed=true`.
+>
+> **📌 Daily Planner repo special-case**: When the cwd is `daily-planner` or any Sokokapu-Limited microservice repo, also list open tasks with `tags=mcp-gap` and surface them at the top of the list so we keep closing capability gaps as we work.
+
+---
+
+## 🩺 Health check on entry (issue #43, effective 2026-05-19)
+
+Before doing any backlog work, run a quick state check and surface issues:
+
+1. `DailyPlanner-get_outcomes()` — count outcomes where `status='Active'` and `kind='Deliverable'`.
+   - If count **> 5**: warn the user. *"You have N active outcomes; the soft cap is 5. Want to archive some before adding more work?"* Suggest `batch_archive_outcomes`.
+2. Scan the backlog for **recurring patterns** (`Daily X`, `Weekly X`, `Morning X`, `Evening X`). Surface these as candidates for habit/routine conversion:
+   - *"These N tasks look recurring — consider `convert_task_to_habit` or `convert_task_to_routine_item` to move them out of the backlog."*
+3. List tasks with `status='Inbox'` separately at the top — the user should triage these before planning further.
+
+This isn't gatekeeping — it's a 30-second sanity check that keeps the backlog small and signals when the user's intent might fit a better entity (habit/routine).
+
+---
+
+## Legacy disk flow (retired — reference only)
+
+The sections below describe the pre-issue-#37 flow that combined MCP + disk
+snapshots and the `resolve-board-root` helper. They are preserved for context
+only — **do not follow them**. The MCP-only flow above supersedes everything below.
+
+
 
 ## When to Use
 
@@ -65,6 +95,40 @@ Otherwise: all boards resolve to `C:\boards\<board-name>\`. Bootstrap if missing
 
 If unclear, default to **List** with the option to drill in.
 
+### Step 1.5: Detect Daily Planner context and pre-fetch MCP gaps
+
+Before running the chosen mode, detect whether the user is working inside the
+Daily Planner ecosystem. If **any** of the following is true, set
+`dpContext = true`:
+
+- `cwd` is, or is under, `C:\repositories\Sokokapu-Limited\daily-planner\`
+- `cwd` is, or is under, any sibling Sokokapu microservice repo under
+  `C:\repositories\Sokokapu-Limited\` (habit-management-system,
+  productivity-management-system, finance-management-system,
+  exercise-managment-system, goal-management-system,
+  journalling-management-system, learning-management-system,
+  wellness-management-system, planning-management-system,
+  reporting-management-system)
+- The resolved board name from Step 0 matches `daily-planner` or any
+  microservice repo name
+- `git remote -v` of the cwd points at `github.com/Sokokapu-Limited/*`
+
+When `dpContext = true`, fetch open MCP gap items in parallel with whatever
+the chosen mode is about to do:
+
+```
+DailyPlanner-list_tasks(tags="mcp-gap", status="!Completed")
+```
+
+Keep the result in memory as `mcpGaps` for use by the rendering steps below.
+If the call fails, log a single warning line and continue — do not block the
+chosen mode.
+
+> Why this exists: every skill that touches Daily Planner is instructed to
+> capture friction as `mcp-gap`-tagged backlog items (see
+> [`../_shared/dp-gap-capture.md`](../_shared/dp-gap-capture.md)). Surfacing
+> them here closes the loop so the MCP surface keeps improving.
+
 ---
 
 ## Mode: List
@@ -88,6 +152,27 @@ If the user specified filters (e.g., "P1 backlog", "frontend backlog", "stale ba
 
 ### Step L3: Render the table
 
+**If `dpContext = true` and `mcpGaps` is non-empty**, render the gaps section
+first (above the normal backlog table) so it's the first thing the developer
+sees:
+
+```
+🔧 MCP/API Gaps ({K} open) — surfaced because cwd is in the Daily Planner ecosystem
+
+  ID    Title                                          Priority  Skill            Age
+  ────  ─────────────────────────────────────────────  ────────  ───────────────  ─────
+  [218] [MCP gap] add bulk_update_tags                 P2        review-backlog    2d
+  [221] [MCP gap] task list missing dueDate field      P3        plan-day          1d
+  [225] [MCP gap] clarify error on duplicate traceId   P3        add-to-backlog    4h
+
+  Try: "plan [218]" to flesh out a fix, or "start task 218" to begin work.
+```
+
+Sort gaps by priority desc, then age desc. Group secondary tags (excluding
+`mcp-gap` and `daily-planner`) reveal which skill surfaced each gap.
+
+Then render the normal backlog table below it:
+
 ```
 📋 Backlog ({N} items, {M} unelaborated)
 
@@ -110,6 +195,10 @@ If the user specified filters (e.g., "P1 backlog", "frontend backlog", "stale ba
 
 If unelaborated high-priority items exist, prompt:
 > *"3 P1/P2 items are unelaborated. Want to plan them now? (yes / pick one / skip)"*
+
+If `dpContext = true` and any `mcp-gap` items exist with elaboration `minimal`,
+also prompt:
+> *"{K} MCP/API gaps are unelaborated. Plan one now to improve the Daily Planner surface? (yes / pick one / skip)"*
 
 ---
 
@@ -321,3 +410,32 @@ Use the existing `move-task` helper ([Helper Operations](../start-task/SKILL.md#
 4. **Sync after every change** — every edit triggers a `push` sync to DailyPlanner.
 5. **Elaboration level reflects reality** — only mark `full` when all `full` fields are populated. It's better to have honest `partial` than aspirational `full`.
 6. **Defer to `start-task` for promotion** — this skill plans; it does not start work.
+
+---
+
+## 🔧 MCP/API Gap Capture
+
+This skill interacts with Daily Planner. While using it, **continuously watch
+for friction** with the MCP tools or backend APIs — missing tools, missing
+fields, awkward multi-call flows, bad defaults, unclear errors, doc gaps —
+and capture each one as a backlog item **inline, without blocking the user's
+request**:
+
+```
+DailyPlanner-create_task(
+  title       = "[MCP gap] <short imperative>",
+  description = "Surfaced by: review-backlog · What I tried · What was missing · Proposed fix (new tool / field / endpoint / fixed default / doc) · Workaround used (if any)",
+  priority    = "P3",          # P2 if it blocks a common workflow; P1 only if it blocks the current request
+  type        = "Task",
+  tags        = ["mcp-gap", "daily-planner", "review-backlog"]
+)
+```
+
+Then acknowledge inline in your reply: `📝 Captured MCP gap: [<id>] <title>`.
+
+- **Do** capture: missing tool, missing field, awkward shape, slow tool, bad default, unclear error, sync mismatch, doc gap.
+- **Do NOT** capture: transient network/auth errors, user-data issues, items already in the backlog (search `tags=mcp-gap` first).
+- **Never let a gap-capture failure block the user.** If `create_task` itself fails, mention the gap inline so the user can capture it manually.
+
+Full protocol, description template, and examples: [`../_shared/dp-gap-capture.md`](../_shared/dp-gap-capture.md).
+The `review-backlog` skill auto-surfaces these items when run from the `daily-planner` repo or any Sokokapu-Limited microservice repo.

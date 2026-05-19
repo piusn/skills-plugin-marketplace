@@ -11,19 +11,86 @@ description: >
 
 Quick-capture skill for new ideas, tasks, bugs, and features. Creates a fully-tracked entry in **one round-trip** with the user, then both DailyPlanner and the board reflect it.
 
-> **🆕 MCP-canonical (Phase 2 of the [207] sync ADR):**
-> Daily Planner is now the authoritative store for board items. Skills MUST
-> call MCP tools to persist board metadata. The file board under
-> `C:\boards\<board>\*.md` is kept in sync **as an optional disk snapshot**
-> during the transition window and can be regenerated at any time via
-> `export_board_to_disk`. New flow per capture:
+> **🚀 MCP-ONLY MODE (issue #37, effective 2026-05-19):**
+> Daily Planner is the **sole** source of truth for board state. The on-disk
+> file board under `C:\boards\<group>\*.md` is **retired** — do not read it,
+> do not write it. Use MCP tools exclusively. If a flow below mentions disk
+> I/O, treat it as historical context only.
 >
-> 1. `DailyPlanner-create_task(title, description, priority, type, tags)` — creates the task
-> 2. `update_task_board_metadata(taskId, level='Minimal', estimatedEffort='Unknown', proposedWorkflow=null, parallelizable=null, capturedBy='add-to-backlog')` — records planning metadata
-> 3. `bulk_upsert_board_items` with one item — sets `group`, `stage='backlog'`, `traceId` (idempotent on traceId)
-> 4. Append to `backlog.md` on disk — **optional**, only as a local snapshot; never gates success
+> **New canonical flow:**
+> 1. `DailyPlanner-create_task(title, description, priority, type, tags)` — creates the task with an integer ID + ObjectId.
+> 2. `DailyPlanner-update_task_board_metadata(taskId, level='Minimal', estimatedEffort='Unknown', proposedWorkflow=null, parallelizable=null, capturedBy='add-to-backlog')` — records planning metadata.
+> 3. `DailyPlanner-bulk_upsert_board_items` with one item — sets `group` (board name), `stage='backlog'`, `traceId` (idempotent on traceId), `status='Inbox'` (issue #39 — new captures default to Inbox, not New, so they're explicitly triaged once).
+> 4. If Step 2c captured DoD content, `DailyPlanner-update_task_definition_of_done(taskId, ...)`.
+> 5. (Optional) `DailyPlanner-export_board_to_disk(group, outputPath)` if the user explicitly asks for a local snapshot. Never automatic.
 >
-> When Daily Planner is unreachable, skip step 4 and surface the error.
+> **Board naming**: default `group = cwd basename`. Skip the `resolve-board-root` / `.board` pointer dance unless the user explicitly references a board by name. Treat the `group` string purely as a label.
+>
+> **Trace ID**: still mandatory. Generate `tr-<6 hex>`. Uniqueness is enforced server-side by the `(UserId, TraceId)` unique index — no need to grep stage files.
+>
+> **Attachments**: use `POST /api/tasks/{id}/attachments` (already wired to Azure Blob); skip `C:\boards\<group>\attachments\` entirely.
+>
+> If Daily Planner is unreachable, surface the error to the user. **Do not** fall back to disk — that's how stale boards happen.
+
+---
+
+## 🔁 Recurring-pattern detection (issue #43, effective 2026-05-19)
+
+**Before creating a task, check whether it's actually a recurring activity.**
+Tasks like "Daily Kegel exercises", "Weekly meal prep", "Morning meditation",
+"Every Sunday: review the week" belong as **Habits** or **Routines**, not tasks.
+Tasks should be one-off work items with a finish line.
+
+Heuristics — if any match, **interrupt the create flow and propose conversion**:
+
+| Pattern | Suggest |
+|---|---|
+| Title starts with `Daily ` / `Every day ` | `create_habit(frequency='daily')` |
+| Title starts with `Weekly ` / `Every week ` | `create_habit(frequency='weekly')` |
+| Title starts with `Weekdays ` / `Mon-Fri ` | `create_habit(frequency='weekdays')` |
+| Title mentions `Morning ` / `Evening ` / `Bedtime ` | Routine item (fold into existing or new routine) |
+| Title contains `meditate`, `journal`, `stretch` (short recurring activity) | Routine item |
+| Title contains `meal prep`, `groceries`, `laundry` (regular chore) | Habit (weekly) |
+
+Phrasing for the interrupt:
+
+```
+🔁 This looks like a recurring activity, not a one-off task.
+   Options:
+   • Create as a Habit with daily streak tracking → `create_habit(...)`
+   • Add as an item to an existing routine → `convert_task_to_routine_item(...)`
+   • Create as a task anyway (use the original capture flow)
+```
+
+Default to recommending Habit for `Daily X` / `Weekly X` patterns, Routine item for time-of-day patterns.
+If the user has already started capturing as a task and we then realize, run
+`create_task` first then immediately offer `convert_task_to_habit` /
+`convert_task_to_routine_item` — both close the source task with a breadcrumb.
+
+## ⚠️ Outcome-cap awareness (issue #43)
+
+When the user references an outcome that doesn't exist yet and asks you to
+create one inline, the server enforces a soft cap of 5 active Deliverable
+outcomes. `create_outcome` returns `409 active_outcome_cap_warning` when
+exceeded. Surface the warning to the user with these options:
+
+- **Archive an outcome first** — `archive_outcome(outcomeId, reason)` or
+  `batch_archive_outcomes(outcomeIds, reason)`.
+- **Create as a Program** — `create_outcome(kind='Program')` is excluded
+  from the cap (long-running multi-phase containers).
+- **Bypass** — `create_outcome(force=true)` proceeds despite the cap.
+
+Never silently swallow the cap warning. The discipline is the feature.
+
+---
+
+## Legacy disk flow (retired — reference only)
+
+The sections below describe the pre-issue-#37 flow that mixed MCP + disk
+snapshots. They are preserved for context but **must not be followed**.
+The MCP-only flow above supersedes everything below.
+
+
 
 ## When to Use
 
@@ -299,3 +366,32 @@ Always show the inferred values in the confirmation; the user can correct them w
 3. **Trace ID is immutable** — never regenerate it after the entry is written.
 4. **Capture is fast** — minimize questions. The user can always enrich later via `review-backlog`.
 5. **Stage is always `backlog`** — this skill never writes to other stage files.
+
+---
+
+## 🔧 MCP/API Gap Capture
+
+This skill interacts with Daily Planner. While using it, **continuously watch
+for friction** with the MCP tools or backend APIs — missing tools, missing
+fields, awkward multi-call flows, bad defaults, unclear errors, doc gaps —
+and capture each one as a backlog item **inline, without blocking the user's
+request**:
+
+```
+DailyPlanner-create_task(
+  title       = "[MCP gap] <short imperative>",
+  description = "Surfaced by: add-to-backlog · What I tried · What was missing · Proposed fix (new tool / field / endpoint / fixed default / doc) · Workaround used (if any)",
+  priority    = "P3",          # P2 if it blocks a common workflow; P1 only if it blocks the current request
+  type        = "Task",
+  tags        = ["mcp-gap", "daily-planner", "add-to-backlog"]
+)
+```
+
+Then acknowledge inline in your reply: `📝 Captured MCP gap: [<id>] <title>`.
+
+- **Do** capture: missing tool, missing field, awkward shape, slow tool, bad default, unclear error, sync mismatch, doc gap.
+- **Do NOT** capture: transient network/auth errors, user-data issues, items already in the backlog (search `tags=mcp-gap` first).
+- **Never let a gap-capture failure block the user.** If `create_task` itself fails, mention the gap inline so the user can capture it manually.
+
+Full protocol, description template, and examples: [`../_shared/dp-gap-capture.md`](../_shared/dp-gap-capture.md).
+The `review-backlog` skill auto-surfaces these items when run from the `daily-planner` repo or any Sokokapu-Limited microservice repo.

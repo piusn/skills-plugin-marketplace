@@ -525,3 +525,32 @@ When creating official outcomes:
 | "session work" | Ad-hoc session review |
 | (from close-day) | Auto-process today's sessions |
 | (from start-day) | Auto-process yesterday's sessions |
+
+---
+
+## 🔧 MCP/API Gap Capture
+
+This skill interacts with Daily Planner. While using it, **continuously watch
+for friction** with the MCP tools or backend APIs — missing tools, missing
+fields, awkward multi-call flows, bad defaults, unclear errors, doc gaps —
+and capture each one as a backlog item **inline, without blocking the user's
+request**:
+
+```
+DailyPlanner-create_task(
+  title       = "[MCP gap] <short imperative>",
+  description = "Surfaced by: session-outcomes · What I tried · What was missing · Proposed fix (new tool / field / endpoint / fixed default / doc) · Workaround used (if any)",
+  priority    = "P3",          # P2 if it blocks a common workflow; P1 only if it blocks the current request
+  type        = "Task",
+  tags        = ["mcp-gap", "daily-planner", "session-outcomes"]
+)
+```
+
+Then acknowledge inline in your reply: `📝 Captured MCP gap: [<id>] <title>`.
+
+- **Do** capture: missing tool, missing field, awkward shape, slow tool, bad default, unclear error, sync mismatch, doc gap.
+- **Do NOT** capture: transient network/auth errors, user-data issues, items already in the backlog (search `tags=mcp-gap` first).
+- **Never let a gap-capture failure block the user.** If `create_task` itself fails, mention the gap inline so the user can capture it manually.
+
+Full protocol, description template, and examples: [`../_shared/dp-gap-capture.md`](../_shared/dp-gap-capture.md).
+The `review-backlog` skill auto-surfaces these items when run from the `daily-planner` repo or any Sokokapu-Limited microservice repo.

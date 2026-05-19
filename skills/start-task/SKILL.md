@@ -11,24 +11,45 @@ description: >
 
 Sets up a dedicated workspace for each Daily Planner task, tracks it on the kanban board, and delegates to the appropriate workflow based on task type. Multiple tasks can be active in the same session — each is tracked independently on the board.
 
-**⛔ Critical Rule: Every task is tracked on the board.** Every task gets its own board entry under `C:\boards\<board-name>\` and its own workspace. Multiple tasks may share a session; they must never share a board entry or workspace.
+**⛔ Critical Rule: Every task is tracked in Daily Planner.** Every task gets its own workspace + branch + stage in DP. Multiple tasks may share a session; they must never share a workspace or branch.
 
-> **🆕 MCP-canonical (Phase 2 of the [207] sync ADR):**
-> Daily Planner is the authoritative store for board state. Stage transitions
-> ("backlog" → "inprogress" → "inreview" → "completed") and metadata updates
-> MUST go through MCP tools first; the file board under `C:\boards\` is now
-> a synced snapshot.
+> **🚀 MCP-ONLY MODE (issue #37, effective 2026-05-19):**
+> Daily Planner is the **sole** source of truth. The on-disk file board under
+> `C:\boards\<group>\*.md` is **retired** — do not read or write it. The
+> `resolve-board-root` / `.board` pointer file flow is **deprecated**.
 >
-> Key MCP tools used by this skill:
+> **New canonical flow for start-task:**
 >
-> - `move_task_stage(taskId, stage, rank?)` — moves the task between Kanban columns. The server enforces the state-rule contract (terminal stages auto-flip `Completed`).
-> - `update_task_board_metadata(taskId, ...)` — sets/updates BoardMetadata (elaboration, effort, workflow, parallelizable, mutates) when the workflow is detected or refined.
-> - `update_task_definition_of_done(taskId, ...)` / `POST /api/tasks/{id}/acceptance-criteria` — applies the DoD captured during planning.
-> - `append_task_note(taskId, content, kind='Decision')` — logs key decisions to the Notes & Decisions timeline.
-> - `link_related_tasks(taskId, otherTaskId)` — connects related work.
-> - `import_board_from_disk(boardPath)` / `export_board_to_disk(group, outputPath)` — round-trip the file board to/from Daily Planner. Used when migrating to MCP-only or for local snapshots.
+> 1. **Active task awareness**: `DailyPlanner-get_tasks(stage='inprogress')` to list everything currently in flight (across all groups). Filter to current session via `DevMetadata.Session.Id`.
+> 2. **Resolve the task**: `DailyPlanner-get_task(id)` — returns the full record with subdocuments.
+> 3. **Detect workflow**: inspect `BoardMetadata.ProposedWorkflow` first; fall back to `Type` + tag heuristics.
+> 4. **Move to in-progress**: `DailyPlanner-move_task_stage(taskId, 'inprogress')`. Server auto-handles state transitions.
+> 5. **Set up the worktree** (unchanged — local filesystem op): branch `user/<user>/<workflow>/<taskNumber>-<short-slug>` from `main` at `C:\worktrees\<repo>\<short-slug>`. Record this in DP:
+>    - `DailyPlanner-update_task_session_link(taskId, id=<sessionId>, name=<sessionName>, worktree=<path>, branch=<branch>)`
+>    - `DailyPlanner-update_task_git_links(taskId, branch=<branch>, baseBranch='main')`
+> 6. **As work progresses**, record files touched + commits via:
+>    - `DailyPlanner-append_task_files_touched(taskId, '<comma,separated,paths>')`
+>    - `DailyPlanner-update_task_git_links(taskId, ..., commitsJson='[...]')` when commits are made
+>    - `DailyPlanner-append_task_note(taskId, '<decision>', kind='Decision')` for design decisions
+>    - `DailyPlanner-add_activity_log(taskId, content='<update>', kind='status'|'blocker'|'general')` for activity timeline
+> 7. **On completion**: `DailyPlanner-move_task_stage(taskId, 'inreview')` (when PR opened) or `'completed'` (after merge). State-rule contract auto-marks `Completed=true`.
 >
-> Existing helpers (`move-task`, `commit-board-change`, etc.) still write the disk snapshot. They now run **after** the equivalent MCP call so DP wins on conflicts.
+> **Board name**: default `group = cwd basename`. The `group` is a string label only — no folder needs to exist anywhere.
+>
+> **Cross-task conflict detection**: rely on `BoardMetadata.Parallelizable` + `BoardMetadata.Mutates.{Repos, Paths}` already in DP. Query other in-progress tasks and check overlap server-side.
+>
+> **Backups / git history of the board**: not applicable — DP's `ModifiedAt` + activity log is the audit trail.
+
+---
+
+## Legacy disk flow (retired — reference only)
+
+The sections below describe the pre-issue-#37 flow that maintained a file
+board under `C:\boards\<group>\` alongside Daily Planner. They are preserved
+for context only — **do not follow them**. The MCP-only flow above
+supersedes everything below.
+
+
 
 ## Instructions
 
@@ -1423,3 +1444,32 @@ User: *"start task 142"* (cwd = repo with existing board; entry is in `blocked.m
    - Activity log shows the original block reason and the unblock — full continuity.
 4. Workspace already exists from prior session → README unchanged; resume from recorded `currentPhase`.
 5. Workflow skill picks up where it left off.
+
+---
+
+## 🔧 MCP/API Gap Capture
+
+This skill interacts with Daily Planner. While using it, **continuously watch
+for friction** with the MCP tools or backend APIs — missing tools, missing
+fields, awkward multi-call flows, bad defaults, unclear errors, doc gaps —
+and capture each one as a backlog item **inline, without blocking the user's
+request**:
+
+```
+DailyPlanner-create_task(
+  title       = "[MCP gap] <short imperative>",
+  description = "Surfaced by: start-task · What I tried · What was missing · Proposed fix (new tool / field / endpoint / fixed default / doc) · Workaround used (if any)",
+  priority    = "P3",          # P2 if it blocks a common workflow; P1 only if it blocks the current request
+  type        = "Task",
+  tags        = ["mcp-gap", "daily-planner", "start-task"]
+)
+```
+
+Then acknowledge inline in your reply: `📝 Captured MCP gap: [<id>] <title>`.
+
+- **Do** capture: missing tool, missing field, awkward shape, slow tool, bad default, unclear error, sync mismatch, doc gap.
+- **Do NOT** capture: transient network/auth errors, user-data issues, items already in the backlog (search `tags=mcp-gap` first).
+- **Never let a gap-capture failure block the user.** If `create_task` itself fails, mention the gap inline so the user can capture it manually.
+
+Full protocol, description template, and examples: [`../_shared/dp-gap-capture.md`](../_shared/dp-gap-capture.md).
+The `review-backlog` skill auto-surfaces these items when run from the `daily-planner` repo or any Sokokapu-Limited microservice repo.

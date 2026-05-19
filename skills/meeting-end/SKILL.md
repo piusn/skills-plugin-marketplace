@@ -324,3 +324,32 @@ When creating Notion blocks, use this structure:
 - For 1:1 meetings, suggest topics the user might want to discuss (career, feedback, blockers) if not already covered
 - Recurring meeting notes accumulate on a single Notion page — use toggle blocks for each occurrence
 - The summary email should capture the full picture: purpose, decisions, action items, shared docs/links, and next steps
+
+---
+
+## 🔧 MCP/API Gap Capture
+
+This skill interacts with Daily Planner. While using it, **continuously watch
+for friction** with the MCP tools or backend APIs — missing tools, missing
+fields, awkward multi-call flows, bad defaults, unclear errors, doc gaps —
+and capture each one as a backlog item **inline, without blocking the user's
+request**:
+
+```
+DailyPlanner-create_task(
+  title       = "[MCP gap] <short imperative>",
+  description = "Surfaced by: meeting-end · What I tried · What was missing · Proposed fix (new tool / field / endpoint / fixed default / doc) · Workaround used (if any)",
+  priority    = "P3",          # P2 if it blocks a common workflow; P1 only if it blocks the current request
+  type        = "Task",
+  tags        = ["mcp-gap", "daily-planner", "meeting-end"]
+)
+```
+
+Then acknowledge inline in your reply: `📝 Captured MCP gap: [<id>] <title>`.
+
+- **Do** capture: missing tool, missing field, awkward shape, slow tool, bad default, unclear error, sync mismatch, doc gap.
+- **Do NOT** capture: transient network/auth errors, user-data issues, items already in the backlog (search `tags=mcp-gap` first).
+- **Never let a gap-capture failure block the user.** If `create_task` itself fails, mention the gap inline so the user can capture it manually.
+
+Full protocol, description template, and examples: [`../_shared/dp-gap-capture.md`](../_shared/dp-gap-capture.md).
+The `review-backlog` skill auto-surfaces these items when run from the `daily-planner` repo or any Sokokapu-Limited microservice repo.
